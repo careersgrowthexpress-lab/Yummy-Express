@@ -1,0 +1,128 @@
+{
+  "entities": {
+    "Product": {
+      "title": "Product",
+      "description": "Store items and food products",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "nameBn": { "type": "string" },
+        "price": { "type": "number" },
+        "discount": { "type": "number" },
+        "description": { "type": "string" },
+        "descriptionBn": { "type": "string" },
+        "image": { "type": "string" },
+        "category": { "type": "string" },
+        "categoryBn": { "type": "string" },
+        "isNew": { "type": "boolean" },
+        "isOffer": { "type": "boolean" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "nameBn", "price", "description", "descriptionBn", "image", "category", "categoryBn"]
+    },
+    "Setting": {
+      "title": "App Setting",
+      "description": "Global application configuration",
+      "type": "object",
+      "properties": {
+        "heroTitle": { "type": "string" },
+        "heroTitleBn": { "type": "string" },
+        "heroDesc": { "type": "string" },
+        "heroDescBn": { "type": "string" },
+        "logoUrl": { "type": "string" },
+        "companyInfo": {
+          "type": "object",
+          "properties": {
+            "description": { "type": "string" },
+            "descriptionBn": { "type": "string" },
+            "mission": { "type": "string" },
+            "missionBn": { "type": "string" },
+            "team": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string" },
+                  "role": { "type": "string" },
+                  "image": { "type": "string" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Customer purchase records",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "total": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "confirmed", "processing", "shipped", "delivered", "cancelled"] },
+        "customer": {
+          "type": "object",
+          "properties": {
+            "firstName": { "type": "string" },
+            "lastName": { "type": "string" },
+            "email": { "type": "string" },
+            "phone": { "type": "string" },
+            "address": { "type": "string" },
+            "city": { "type": "string" },
+            "area": { "type": "string" },
+            "paymentMethod": { "type": "string", "enum": ["cod", "bkash", "nagad", "rocket"] },
+            "transactionId": { "type": "string" }
+          }
+        },
+        "items": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["total", "status", "createdAt", "customer", "items"]
+    },
+    "User": {
+      "title": "User Profile",
+      "description": "Extended user profile details",
+      "type": "object",
+      "properties": {
+        "phone": { "type": "string" },
+        "address": { "type": "string" },
+        "city": { "type": "string" },
+        "area": { "type": "string" },
+        "bio": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "Admin": {
+      "title": "Admin Record",
+      "description": "Admin authorization records",
+      "type": "object",
+      "properties": {
+        "role": { "type": "string", "enum": ["super", "manager"] },
+        "email": { "type": "string" }
+      }
+    }
+  },
+  "firestore": {
+    "products/{productId}": {
+      "schema": "Product",
+      "description": "Collection of available products"
+    },
+    "settings/{settingId}": {
+      "schema": "Setting",
+      "description": "Site-wide configuration constants"
+    },
+    "orders/{orderId}": {
+      "schema": "Order",
+      "description": "Customer orders"
+    },
+    "users/{userId}": {
+      "schema": "User",
+      "description": "Extended user profile information"
+    },
+    "admins/{userId}": {
+      "schema": "Admin",
+      "description": "Authorized admin users"
+    }
+  }
+}
