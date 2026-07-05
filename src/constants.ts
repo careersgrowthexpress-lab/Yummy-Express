@@ -3,9 +3,9 @@ import { Product } from './types';
 export const PRODUCTS: Product[] = [
   {
     id: '1',
-    name: 'Gourmet Truffle Burger',
-    nameBn: 'গুরমেট ট্রাফল বার্গার',
-    price: 18,
+    name: 'Chingri Balacao',
+    nameBn: 'Chingri Balacao',
+    price: 900,
     discount: 15,
     description: 'Juicy wagyu beef patty with black truffle aioli and aged cheddar.',
     descriptionBn: 'রসালো ওয়াগিউ বিফ প্যাটি, সাথে ব্ল্যাক ট্রাফল আইওলি এবং এজেড চেডার চিজ।',
@@ -13,8 +13,8 @@ export const PRODUCTS: Product[] = [
     category: 'Burgers',
     categoryBn: 'বার্গার',
     isNew: true,
-    weight: '350g',
-    weightBn: '৩৫০ গ্রাম'
+    weight: '500g',
+    weightBn: '500 গ্রাম'
   },
   {
     id: '2',
