@@ -9,7 +9,7 @@ export const PRODUCTS: Product[] = [
     discount: 15,
     description: 'Juicy wagyu beef patty with black truffle aioli and aged cheddar.',
     descriptionBn: 'রসালো ওয়াগিউ বিফ প্যাটি, সাথে ব্ল্যাক ট্রাফল আইওলি এবং এজেড চেডার চিজ।',
-    image: 'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?q=80&w=800&auto=format&fit=crop',
+    image: 'https://res.cloudinary.com/rbjnn5rh/image/upload/v1783255816/WhatsApp_Image_2026-07-05_at_6.32.47_PM_mooh1a.jpg',
     category: 'Burgers',
     categoryBn: 'বার্গার',
     isNew: true,
