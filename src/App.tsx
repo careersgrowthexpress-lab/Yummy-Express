@@ -184,7 +184,15 @@ export default function App() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [showOffersOnly, setShowOffersOnly] = useState(false);
-  const [products, setProducts] = useState<Product[]>(STATIC_PRODUCTS);
+  const [products, setProducts] = useState<Product[]>(() => {
+    const seen = new Set<string>();
+    return STATIC_PRODUCTS.filter(p => {
+      if (!p || !p.id) return false;
+      if (seen.has(p.id)) return false;
+      seen.add(p.id);
+      return true;
+    });
+  });
   const [user, setUser] = useState<any>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [showAdminPanel, setShowAdminPanel] = useState(false);
@@ -521,6 +529,33 @@ export default function App() {
 
   const t = translations[language];
 
+  const mergeSiteSettings = (fetchedData: any) => {
+    if (!fetchedData) return;
+    setSiteSettings(prev => {
+      const companyInfo = fetchedData.companyInfo || {};
+      return {
+        ...prev,
+        ...fetchedData,
+        companyInfo: {
+          ...prev.companyInfo,
+          ...companyInfo,
+          deliveryChargeInside: companyInfo.deliveryChargeInside !== undefined && companyInfo.deliveryChargeInside !== null
+            ? Number(companyInfo.deliveryChargeInside)
+            : prev.companyInfo.deliveryChargeInside,
+          deliveryChargeOutside: companyInfo.deliveryChargeOutside !== undefined && companyInfo.deliveryChargeOutside !== null
+            ? Number(companyInfo.deliveryChargeOutside)
+            : prev.companyInfo.deliveryChargeOutside,
+          deliveryFreeThreshold: companyInfo.deliveryFreeThreshold !== undefined && companyInfo.deliveryFreeThreshold !== null
+            ? Number(companyInfo.deliveryFreeThreshold)
+            : prev.companyInfo.deliveryFreeThreshold,
+          deliveryChargeEnabled: companyInfo.deliveryChargeEnabled !== undefined && companyInfo.deliveryChargeEnabled !== null
+            ? !!companyInfo.deliveryChargeEnabled
+            : prev.companyInfo.deliveryChargeEnabled,
+        }
+      };
+    });
+  };
+
   // Site Settings Subscription
   useEffect(() => {
     const fetchSettings = async () => {
@@ -528,7 +563,7 @@ export default function App() {
       if (localSettingsStr) {
         try {
           const localSettings = JSON.parse(localSettingsStr);
-          if (localSettings) setSiteSettings(localSettings);
+          if (localSettings) mergeSiteSettings(localSettings);
         } catch (err) {
           console.error('Error parsing local settings in App:', err);
         }
@@ -543,7 +578,7 @@ export default function App() {
       if (error) {
         console.error("Settings error:", error);
       } else if (data) {
-        setSiteSettings(data as any);
+        mergeSiteSettings(data as any);
       }
     };
 
@@ -555,7 +590,7 @@ export default function App() {
         if (localSettingsStr) {
           try {
             const localSettings = JSON.parse(localSettingsStr);
-            if (localSettings) setSiteSettings(localSettings);
+            if (localSettings) mergeSiteSettings(localSettings);
           } catch (err) {
             console.error('Error parsing local settings on event:', err);
           }
@@ -575,7 +610,7 @@ export default function App() {
         table: 'settings', 
         filter: 'id=eq.global' 
       }, (payload) => {
-        setSiteSettings(payload.new as any);
+        mergeSiteSettings(payload.new as any);
       })
       .subscribe();
 
@@ -932,8 +967,18 @@ export default function App() {
         return prods;
       };
 
+      const sanitizeUniqueProducts = (prods: Product[]) => {
+        const seen = new Set<string>();
+        return prods.filter(p => {
+          if (!p || !p.id) return false;
+          if (seen.has(p.id)) return false;
+          seen.add(p.id);
+          return true;
+        });
+      };
+
       if (!supabase) {
-        setProducts(applyCustomCharges(baseProducts));
+        setProducts(sanitizeUniqueProducts(applyCustomCharges(baseProducts)));
         return;
       }
       const { data, error } = await supabase
@@ -943,7 +988,7 @@ export default function App() {
 
       if (error) {
         console.error("Supabase products error:", error);
-        setProducts(applyCustomCharges(baseProducts));
+        setProducts(sanitizeUniqueProducts(applyCustomCharges(baseProducts)));
       } else {
         // If Supabase is active and returns data successfully, we should use it.
         // However, if the database is completely empty (0 products) and there is no local custom products
@@ -951,7 +996,7 @@ export default function App() {
         // so the site doesn't look blank. But if local custom products was cleared explicitly (set to []),
         // or if the user wants an empty catalog, we respect that.
         const dbProds = (data.length === 0 && localProductsStr === null) ? baseProducts : (data as Product[]);
-        setProducts(applyCustomCharges(dbProds));
+        setProducts(sanitizeUniqueProducts(applyCustomCharges(dbProds)));
       }
     };
 
@@ -1044,21 +1089,7 @@ export default function App() {
   const cartTotal = useMemo(() => cart.reduce((sum, item) => sum + (item.price * item.quantity), 0), [cart]);
 
   const shippingCost = useMemo(() => {
-    // 1. Check if any item in the cart has a product-specific custom delivery charge
-    let maxProductDeliveryCharge = -1;
-    cart.forEach(item => {
-      if (item.deliveryCharge !== undefined && item.deliveryCharge !== null && item.deliveryCharge >= 0) {
-        if (item.deliveryCharge > maxProductDeliveryCharge) {
-          maxProductDeliveryCharge = Number(item.deliveryCharge);
-        }
-      }
-    });
-
-    if (maxProductDeliveryCharge >= 0) {
-      return maxProductDeliveryCharge;
-    }
-
-    // 2. Fallback to site settings if no product-specific delivery charge is found
+    // 1. Fallback to site settings if delivery charge is disabled
     const isDeliveryChargeEnabled = siteSettings.companyInfo && siteSettings.companyInfo.deliveryChargeEnabled !== undefined
       ? !!siteSettings.companyInfo.deliveryChargeEnabled
       : false;
@@ -1069,8 +1100,6 @@ export default function App() {
       ? Number(siteSettings.companyInfo.deliveryFreeThreshold) || 1000
       : 1000;
       
-    if (cartTotal >= threshold) return 0;
-    
     const inside = siteSettings.companyInfo && siteSettings.companyInfo.deliveryChargeInside !== undefined
       ? Number(siteSettings.companyInfo.deliveryChargeInside) || 60
       : 60;
@@ -1079,7 +1108,31 @@ export default function App() {
       ? Number(siteSettings.companyInfo.deliveryChargeOutside) || 120
       : 120;
       
-    return checkoutForm.deliveryZone === 'outside' ? outside : inside;
+    const standardGlobalCharge = cartTotal >= threshold ? 0 : (checkoutForm.deliveryZone === 'outside' ? outside : inside);
+    
+    if (cart.length === 0) return 0;
+
+    let maxEffectiveCharge = 0;
+    let hasCustomProductCharge = false;
+    
+    cart.forEach(item => {
+      let itemCharge = 0;
+      if (item.deliveryCharge !== undefined && item.deliveryCharge !== null && item.deliveryCharge >= 0) {
+        itemCharge = Number(item.deliveryCharge);
+        hasCustomProductCharge = true;
+      } else {
+        itemCharge = standardGlobalCharge;
+      }
+      if (itemCharge > maxEffectiveCharge) {
+        maxEffectiveCharge = itemCharge;
+      }
+    });
+    
+    if (!hasCustomProductCharge) {
+      return standardGlobalCharge;
+    }
+    
+    return maxEffectiveCharge;
   }, [siteSettings, cartTotal, checkoutForm.deliveryZone, cart]);
 
   const finalCategories = useMemo(() => {
@@ -1265,11 +1318,30 @@ export default function App() {
         return;
       }
       
-      const { data, error } = await supabase
-        .from('orders')
-        .insert([orderData])
-        .select()
-        .single();
+      let data, error;
+      try {
+        const res = await supabase
+          .from('orders')
+          .insert([orderData])
+          .select()
+          .single();
+        data = res.data;
+        error = res.error;
+      } catch (insertErr) {
+        if (orderData.user_id) {
+          console.warn('Foreign key sync constraint issue detected. Retrying order placement without profile user_id...', insertErr);
+          const fallbackOrderData = { ...orderData, user_id: null };
+          const res = await supabase
+            .from('orders')
+            .insert([fallbackOrderData])
+            .select()
+            .single();
+          data = res.data;
+          error = res.error;
+        } else {
+          throw insertErr;
+        }
+      }
 
       if (error) throw error;
 
@@ -2416,7 +2488,10 @@ export default function App() {
               onClick={() => setSelectedProduct(null)}
             />
             <motion.div
-              layoutId={`product-${selectedProduct.id}`}
+              initial={{ opacity: 0, scale: 0.95, y: 24 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 24 }}
+              transition={{ type: "spring", duration: 0.45, bounce: 0.1 }}
               className="bg-white rounded-3xl sm:rounded-[2.5rem] w-full max-w-5xl overflow-hidden relative z-10 flex flex-col md:flex-row h-full max-h-[90vh] md:h-auto"
             >
               <button 
@@ -2925,11 +3000,11 @@ interface ProductCardProps {
 function ProductCard({ product, onClick, priority = false, language, isFavorited = false, onToggleFavorite }: ProductCardProps) {
   return (
     <motion.div 
-      layoutId={`product-${product.id}`}
-      initial={{ opacity: 0, y: 20 }}
+      initial={{ opacity: 0, y: 16 }}
       whileInView={{ opacity: 1, y: 0 }}
       viewport={{ once: true }}
-      className="card-sleek group cursor-pointer"
+      transition={{ duration: 0.4, ease: "easeOut" }}
+      className="card-sleek group cursor-pointer h-full"
       onClick={onClick}
     >
       <div className="aspect-square bg-slate-100 rounded-lg mb-4 flex items-center justify-center relative overflow-hidden">
