@@ -252,7 +252,21 @@ export const PRODUCTS: Product[] = [
     category: 'Desserts',
     categoryBn: 'ডেজার্ট',
     isNew: true
+  },
+  {
+    id: '20',
+    name: 'Red Velvet Opera Cake',
+    nameBn: 'sadik,
+    price: 12,
+    discount: 15,
+    description: 'Layers of almond sponge, beetroot-infused cream cheese, and dark chocolate ganache.',
+    descriptionBn: 'অ্যালমন্ড স্পঞ্জ, ক্রিম চিজ এবং ডার্ক চকলেট গ্যানাচে তৈরি চমৎকার লেয়ার্ড কেক।',
+    image: 'https://images.unsplash.com/photo-1586985289906-40698897450a?q=80&w=800&auto=format&fit=crop',
+    category: 'Desserts',
+    categoryBn: 'ডেজার্ট',
+    isNew: true
   }
+  
 ];
 
 export const CATEGORIES = [
