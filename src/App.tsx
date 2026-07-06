@@ -2392,7 +2392,8 @@ export default function App() {
                         {selectedProduct.originalPrice && selectedProduct.originalPrice > selectedProduct.price && (
                           <span className="text-lg font-semibold text-slate-400 line-through">৳{selectedProduct.originalPrice}</span>
                         )}
-                        <u><p className="text-3xl font-extrabold text-amber-600">৳{selectedProduct.price}</p></u>
+                        <p className="text-3xl font-extrabold text-amber-600 line-through">৳{selectedProduct.price}</p>
+
                         {selectedProduct.weight && (
                           <span className="text-xs font-bold text-slate-400 uppercase tracking-widest bg-slate-50 px-3 py-1 rounded-full border border-slate-100">
                             {language === 'en' ? selectedProduct.weight : (selectedProduct.weightBn || selectedProduct.weight)}
