@@ -778,7 +778,7 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
         backupProductsLocally(mergedProds);
       }
     } catch (error) {
-      console.error("Supabase products error:", error);
+      console.warn("Supabase products warning:", error);
     } finally {
       setLoading(false);
     }

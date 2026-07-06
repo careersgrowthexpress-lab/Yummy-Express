@@ -360,41 +360,66 @@ export default function App() {
 
       // 2. Query remote orders from Supabase matching user profile parameters
       try {
-        let query = supabase.from('orders').select('*');
-        const conditions: string[] = [];
+        let remoteOrders: Order[] = [];
+        const queries: Promise<any>[] = [];
 
         if (isValidUUID(user.id)) {
-          conditions.push(`user_id.eq.${user.id}`);
+          queries.push(
+            supabase
+              .from('orders')
+              .select('*')
+              .eq('user_id', user.id)
+              .order('created_at', { ascending: false })
+          );
         }
         
         if (user.email) {
-          conditions.push(`customer->>email.eq.${user.email}`);
+          queries.push(
+            supabase
+              .from('orders')
+              .select('*')
+              .eq('customer->>email', user.email)
+              .order('created_at', { ascending: false })
+          );
         }
         
         const userPhone = user.phone || user.user_metadata?.phone;
         if (userPhone) {
-          conditions.push(`customer->>phone.eq.${userPhone}`);
-        }
-
-        let remoteOrders: Order[] = [];
-        if (conditions.length > 0) {
-          const { data, error } = await query.or(conditions.join(',')).order('created_at', { ascending: false });
-          if (error) {
-            console.error("Supabase fetch orders with OR query error:", error);
-            // Fallback to simpler user_id query
-            const { data: fallbackData } = await supabase
+          queries.push(
+            supabase
               .from('orders')
               .select('*')
-              .eq('user_id', user.id)
-              .order('created_at', { ascending: false });
-            if (fallbackData) remoteOrders = fallbackData as Order[];
-          } else if (data) {
-            remoteOrders = data as Order[];
-          }
+              .eq('customer->>phone', userPhone)
+              .order('created_at', { ascending: false })
+          );
+        }
+
+        if (queries.length > 0) {
+          const results = await Promise.all(queries);
+          const orderMap = new Map<string, Order>();
+          results.forEach(res => {
+            if (res.data) {
+              res.data.forEach((o: Order) => {
+                if (o && o.id) {
+                  orderMap.set(o.id, o);
+                }
+              });
+            } else if (res.error) {
+              console.warn("Supabase individual fetch order query warning:", res.error);
+            }
+          });
+          remoteOrders = Array.from(orderMap.values());
         } else {
-          const { data, error } = await query.eq('user_id', user.id).order('created_at', { ascending: false });
+          // Fallback if no conditions
+          const { data, error } = await supabase
+            .from('orders')
+            .select('*')
+            .eq('user_id', user.id)
+            .order('created_at', { ascending: false });
           if (!error && data) {
             remoteOrders = data as Order[];
+          } else if (error) {
+            console.warn("Supabase fallback fetch order query warning:", error);
           }
         }
 
@@ -576,7 +601,7 @@ export default function App() {
         .single();
 
       if (error) {
-        console.error("Settings error:", error);
+        console.warn("Settings warning:", error);
       } else if (data) {
         mergeSiteSettings(data as any);
       }
@@ -987,7 +1012,7 @@ export default function App() {
         .order('updated_at', { ascending: false });
 
       if (error) {
-        console.error("Supabase products error:", error);
+        console.warn("Supabase products warning:", error);
         setProducts(sanitizeUniqueProducts(applyCustomCharges(baseProducts)));
       } else {
         // If Supabase is active and returns data successfully, we should use it.
