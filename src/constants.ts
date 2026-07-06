@@ -9,7 +9,7 @@ export const PRODUCTS: Product[] = [
     discount: 850,
     description: 'Shrimp Balachao is a traditional and flavorful spicy delicacy made with shrimp, garlic, onions, dried chilies, and a blend of aromatic spices. Known for its rich taste and distinctive aroma, it pairs perfectly with steamed rice, khichuri, pulao, paratha, or bread. When prepared and stored properly, Shrimp Balachao has a long shelf life and adds a delicious',
     descriptionBn: 'চিংড়ি বালাচাও একটি ঐতিহ্যবাহী ও সুস্বাদু ঝাল খাবার, যা চিংড়ি, রসুন, পেঁয়াজ, শুকনা মরিচ এবং বিভিন্ন মসলার সমন্বয়ে তৈরি করা হয়। এর অনন্য স্বাদ ও মনমুগ্ধকর ঘ্রাণ ভাত, খিচুড়ি, পোলাও, পরোটা কিংবা রুটির সঙ্গে দারুণ মানিয়ে যায়। সঠিকভাবে প্রস্তুত ও সংরক্ষণ করলে এটি দীর্ঘদিন ভালো থাকে এবং প্রতিটি খাবারে যোগ করে বাড়তি স্বাদ।',
-    image: 'https://res.cloudinary.com/rbjnn5rh/image/upload/v1783367964/df_rffync.jpg',
+    image: 'https://res.cloudinary.com/rbjnn5rh/image/upload/v1783255816/WhatsApp_Image_2026-07-05_at_6.32.47_PM_mooh1a.jpg',
     category: 'Combo',
     categoryBn: 'হেলদি',
     isNew: true,
