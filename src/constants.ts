@@ -6,7 +6,7 @@ export const PRODUCTS: Product[] = [
     name: 'Chingri Balacao',
     nameBn: 'Chingri Balacao',
     price: 900,
-    discount: 15,
+    discount: 20,
     description: 'Juicy wagyu beef patty with black truffle aioli and aged cheddar.',
     descriptionBn: 'রসালো ওয়াগিউ বিফ প্যাটি, সাথে ব্ল্যাক ট্রাফল আইওলি এবং এজেড চেডার চিজ।',
     image: 'https://res.cloudinary.com/rbjnn5rh/image/upload/v1783255816/WhatsApp_Image_2026-07-05_at_6.32.47_PM_mooh1a.jpg',
