@@ -255,7 +255,23 @@ export const PRODUCTS: Product[] = [
     categoryBn: 'ডেজার্ট',
     isNew: true,
     deliveryCharge: 0
-  }
+  },
+  {
+    id: '1',
+    name: 'Chingri Balachao',
+    nameBn: 'চিংড়ি বালাচাও',
+    price: 900,
+    discount: 850,
+    description: 'A premium, crispy, and savory Bangladeshi fusion delicacy made with dried shrimp, fried onions, garlic, and special spices. Perfectly healthy, nutritious, and ready to elevate your daily meals.',
+    descriptionBn: 'শুকনো চিংড়ি, মচমচে ভাজা পেঁয়াজ, রসুন এবং বিশেষ মশলার মিশ্রণে তৈরি একটি প্রিমিয়াম ও সুস্বাদু ঐতিহ্যবাহী খাবার। এটি সম্পূর্ণ স্বাস্থ্যসম্মত, পুষ্টিকর এবং আপনার প্রতিদিনের খাবারের স্বাদ বাড়িয়ে তুলতে দারুণ উপযোগী।',
+    image: 'https://res.cloudinary.com/rbjnn5rh/image/upload/v1783367964/df_rffync.jpg',
+    category: 'Healthy',
+    categoryBn: 'হেলদি',
+    isNew: true,
+    weight: '200g',
+    weightBn: '২০০ গ্রাম',
+    deliveryCharge: 60
+}
 ];
 
 export const CATEGORIES = [
