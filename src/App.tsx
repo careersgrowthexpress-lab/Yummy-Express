@@ -31,7 +31,7 @@ import {
   Heart
 } from 'lucide-react';
 import { Product, CartItem, Page, Order, CustomerDetails } from './types';
-import { PRODUCTS as STATIC_PRODUCTS, CATEGORIES } from './constants';
+import { PRODUCTS as STATIC_PRODUCTS, CATEGORIES, PRICING_CONFIG, DELIVERY_CONFIG } from './constants';
 import { Language, translations } from './translations';
 import { supabase } from './lib/supabase';
 import { saveLocalUserBackup, syncCustomerToGoogleSheets } from './lib/webhook';
@@ -126,6 +126,52 @@ function isFuzzyMatch(query: string, target: string): boolean {
   return false;
 }
 
+interface PriceDisplayProps {
+  product: Product;
+  className?: string;
+  priceClassName?: string;
+  regularPriceClassName?: string;
+}
+
+function PriceDisplay({ 
+  product, 
+  className = "flex items-baseline gap-1.5 flex-wrap", 
+  priceClassName = "font-extrabold text-amber-600", 
+  regularPriceClassName = "text-xs text-slate-400" 
+}: PriceDisplayProps) {
+  const hasDiscount = PRICING_CONFIG.hasDiscount(product);
+  const regularPrice = PRICING_CONFIG.getRegularPrice(product);
+  const discountPrice = PRICING_CONFIG.getDiscountPrice(product);
+
+  const regularPriceElement = hasDiscount && regularPrice ? (
+    <span className={`${regularPriceClassName} ${PRICING_CONFIG.strikeThroughRegularPrice ? 'line-through' : ''}`}>
+      ৳{regularPrice}
+    </span>
+  ) : null;
+
+  const discountPriceElement = (
+    <span className={priceClassName}>
+      ৳{discountPrice}
+    </span>
+  );
+
+  return (
+    <div className={className}>
+      {PRICING_CONFIG.showDiscountFirst ? (
+        <>
+          {discountPriceElement}
+          {regularPriceElement}
+        </>
+      ) : (
+        <>
+          {regularPriceElement}
+          {discountPriceElement}
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function App() {
   const [language, setLanguage] = useState<Language>('bn');
   const [currentPage, setCurrentPage] = useState<Page>('home');
@@ -156,10 +202,10 @@ export default function App() {
       missionBn: '',
       team: [],
       sliders: [] as { id: string; image: string; titleEn: string; titleBn: string; subtitleEn: string; subtitleBn: string; linkProductId?: string; price?: number }[],
-      deliveryChargeInside: 60,
-      deliveryChargeOutside: 120,
-      deliveryFreeThreshold: 1000,
-      deliveryChargeEnabled: false,
+      deliveryChargeInside: DELIVERY_CONFIG ? DELIVERY_CONFIG.chargeInside : 60,
+      deliveryChargeOutside: DELIVERY_CONFIG ? DELIVERY_CONFIG.chargeOutside : 120,
+      deliveryFreeThreshold: DELIVERY_CONFIG ? DELIVERY_CONFIG.freeThreshold : 1000,
+      deliveryChargeEnabled: DELIVERY_CONFIG ? DELIVERY_CONFIG.enabled : true,
     }
   });
   const [checkoutForm, setCheckoutForm] = useState<CustomerDetails & { deliveryZone?: 'inside' | 'outside' }>({
@@ -847,10 +893,23 @@ export default function App() {
   useEffect(() => {
     const fetchProducts = async () => {
       const localProductsStr = localStorage.getItem('yummydash_custom_products');
-      let baseProducts = STATIC_PRODUCTS;
+      let baseProducts = [...STATIC_PRODUCTS];
       if (localProductsStr) {
         try {
-          baseProducts = JSON.parse(localProductsStr);
+          const localProducts = JSON.parse(localProductsStr) as Product[];
+          if (Array.isArray(localProducts)) {
+            const staticIds = new Set(STATIC_PRODUCTS.map(p => p.id));
+            
+            // Map static products, overriding any with local versions if they exist
+            const merged = STATIC_PRODUCTS.map(sp => {
+              const lp = localProducts.find(p => p.id === sp.id);
+              return lp ? { ...sp, ...lp } : sp;
+            });
+            
+            // Append local products that are not present in static products
+            const extraLocalProducts = localProducts.filter(lp => lp && lp.id && !staticIds.has(lp.id));
+            baseProducts = [...merged, ...extraLocalProducts];
+          }
         } catch (e) {
           console.error('Error parsing local products in App:', e);
         }
@@ -886,7 +945,12 @@ export default function App() {
         console.error("Supabase products error:", error);
         setProducts(applyCustomCharges(baseProducts));
       } else {
-        const dbProds = data.length > 0 ? (data as Product[]) : baseProducts;
+        // If Supabase is active and returns data successfully, we should use it.
+        // However, if the database is completely empty (0 products) and there is no local custom products
+        // (meaning it's a first-time visit with an unseeded database), we can fallback to baseProducts (demo products)
+        // so the site doesn't look blank. But if local custom products was cleared explicitly (set to []),
+        // or if the user wants an empty catalog, we respect that.
+        const dbProds = (data.length === 0 && localProductsStr === null) ? baseProducts : (data as Product[]);
         setProducts(applyCustomCharges(dbProds));
       }
     };
@@ -1736,12 +1800,12 @@ export default function App() {
                             <img src={p.image || undefined} className="w-full h-full object-cover opacity-60 group-hover:scale-110 transition-transform duration-700" alt={language === 'en' ? p.name : p.nameBn} />
                             <div className="absolute inset-0 p-4 flex flex-col justify-end bg-gradient-to-t from-slate-900 via-transparent">
                               <p className="text-xs font-bold text-white truncate">{language === 'en' ? p.name : p.nameBn}</p>
-                              <div className="flex items-center gap-1.5 flex-wrap">
-                                {p.originalPrice && p.originalPrice > p.price && (
-                                  <span className="text-slate-400 text-[9px] line-through">৳{p.originalPrice}</span>
-                                )}
-                                <span className="text-xs text-amber-400 font-bold">৳{p.price}</span>
-                              </div>
+                              <PriceDisplay 
+                                product={p} 
+                                className="flex items-center gap-1.5 flex-wrap" 
+                                priceClassName="text-xs text-amber-400 font-bold" 
+                                regularPriceClassName="text-slate-400 text-[9px]" 
+                              />
                             </div>
                           </div>
                         ))}
@@ -2142,7 +2206,15 @@ export default function App() {
                               {item.weight && ` (${language === 'en' ? item.weight : (item.weightBn || item.weight)})`}
                             </p>
                             <div className="flex items-center gap-3 mt-1">
-                              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{item.quantity} x ৳{item.price}</p>
+                              <div className="flex items-baseline gap-1">
+                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest shrink-0">{item.quantity} x</span>
+                                <PriceDisplay 
+                                  product={item} 
+                                  className="inline-flex items-baseline gap-1 flex-wrap" 
+                                  priceClassName="text-xs font-bold text-slate-700" 
+                                  regularPriceClassName="text-[10px] text-slate-400 line-through" 
+                                />
+                              </div>
                               <button 
                                 type="button"
                                 onClick={() => removeFromCart(item.id)} 
@@ -2387,13 +2459,14 @@ export default function App() {
                         </span>
                       )}
                     </h2>
-                    <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-4 flex-wrap">
                       <div className="flex items-baseline gap-2 flex-wrap">
-                        {selectedProduct.originalPrice && selectedProduct.originalPrice > selectedProduct.price && (
-                          <span className="text-lg font-semibold text-slate-400 line-through">৳{selectedProduct.originalPrice}</span>
-                        )}
-                        <p className="text-3xl font-extrabold text-amber-600 line-through">৳{selectedProduct.price}</p>
-
+                        <PriceDisplay 
+                          product={selectedProduct} 
+                          className="flex items-baseline gap-2 flex-wrap" 
+                          priceClassName="text-3xl font-extrabold text-amber-600" 
+                          regularPriceClassName="text-lg font-semibold text-slate-400" 
+                        />
                         {selectedProduct.weight && (
                           <span className="text-xs font-bold text-slate-400 uppercase tracking-widest bg-slate-50 px-3 py-1 rounded-full border border-slate-100">
                             {language === 'en' ? selectedProduct.weight : (selectedProduct.weightBn || selectedProduct.weight)}
@@ -2408,6 +2481,48 @@ export default function App() {
                           </span>
                         </div>
                       )}
+                      {/* Delivery Charge Indicator */}
+                      {(() => {
+                        const delChargeText = (() => {
+                          if (selectedProduct.deliveryCharge !== undefined && selectedProduct.deliveryCharge !== null) {
+                            return selectedProduct.deliveryCharge === 0 
+                              ? (language === 'en' ? 'FREE' : 'ফ্রি') 
+                              : `৳${selectedProduct.deliveryCharge}`;
+                          }
+                          if (!siteSettings.companyInfo?.deliveryChargeEnabled) {
+                            return language === 'en' ? 'FREE' : 'ফ্রি';
+                          }
+                          const inside = siteSettings.companyInfo?.deliveryChargeInside ?? 60;
+                          const outside = siteSettings.companyInfo?.deliveryChargeOutside ?? 120;
+                          if (inside === 0 && outside === 0) {
+                            return language === 'en' ? 'FREE' : 'ফ্রি';
+                          }
+                          if (inside === outside) {
+                            return `৳${inside}`;
+                          }
+                          return language === 'en' 
+                            ? `৳${inside} (Inside) / ৳${outside} (Outside)` 
+                            : `৳${inside} (ভিতরে) / ৳${outside} (বাইরে)`;
+                        })();
+
+                        const isFree = delChargeText === 'FREE' || delChargeText === 'ফ্রি';
+
+                        return (
+                          <div className={`flex items-center gap-2 px-3 py-1 rounded-full border ${
+                            isFree 
+                              ? 'bg-emerald-50 border-emerald-100 text-emerald-700' 
+                              : 'bg-amber-50 border-amber-100 text-slate-500'
+                          }`}>
+                            <Truck className={`w-3.5 h-3.5 ${isFree ? 'text-emerald-600' : 'text-amber-600'}`} />
+                            <span className="text-[10px] font-black uppercase tracking-widest">
+                              {language === 'en' ? 'Delivery: ' : 'ডেলিভারি চার্জ: '}
+                              <span className={`font-extrabold ${isFree ? 'text-emerald-600 font-black' : 'text-amber-600'}`}>
+                                {delChargeText}
+                              </span>
+                            </span>
+                          </div>
+                        );
+                      })()}
                     </div>
                   </div>
   
@@ -2478,7 +2593,12 @@ export default function App() {
                         </div>
                         <div className="text-[10px] text-slate-400 uppercase tracking-widest">{language === 'en' ? item.category : item.categoryBn}</div>
                         <div className="flex items-center justify-between mt-1">
-                          <span className="text-xs font-bold text-amber-600">৳{item.price}</span>
+                          <PriceDisplay 
+                            product={item} 
+                            className="flex items-baseline gap-1.5 flex-wrap" 
+                            priceClassName="text-xs font-bold text-amber-600" 
+                            regularPriceClassName="text-[10px] text-slate-400 line-through" 
+                          />
                           <div className="flex items-center gap-2">
                             <div className="flex items-center gap-2 border border-slate-200 rounded-md px-1 bg-slate-50">
                               <button onClick={() => updateQuantity(item.id, -1)} className="text-xs px-1 hover:text-amber-600">-</button>
@@ -2847,13 +2967,24 @@ function ProductCard({ product, onClick, priority = false, language, isFavorited
             {language === 'en' ? `Weight: ${product.weight}` : `পরিমাপ: ${product.weightBn || product.weight}`}
           </span>
         )}
-        <p className="text-xs text-slate-400 mb-2 mt-0.5">{language === 'en' ? product.category : product.categoryBn}</p>
+        <div className="flex items-center justify-between gap-2 mt-0.5 mb-2">
+          <p className="text-xs text-slate-400">{language === 'en' ? product.category : product.categoryBn}</p>
+          {product.deliveryCharge !== undefined && product.deliveryCharge !== null && (
+            <span className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full flex items-center gap-0.5 border ${
+              product.deliveryCharge === 0 
+                ? 'bg-emerald-50 text-emerald-600 border-emerald-100/50' 
+                : 'bg-slate-50 text-slate-500 border-slate-100/50'
+            }`}>
+              <Truck className={`w-2.5 h-2.5 ${product.deliveryCharge === 0 ? 'text-emerald-500' : 'text-slate-400'}`} />
+              {product.deliveryCharge === 0 
+                ? (language === 'en' ? 'Free' : 'ফ্রি') 
+                : `৳${product.deliveryCharge}`}
+            </span>
+          )}
+        </div>
         <div className="flex items-center justify-between mt-auto pt-3 border-t border-slate-100">
           <div className="flex items-baseline gap-1.5 flex-wrap">
-            {product.originalPrice && product.originalPrice > product.price && (
-              <span className="text-xs text-slate-400 line-through">৳{product.originalPrice}</span>
-            )}
-            <span className="font-extrabold text-amber-600">৳{product.price}</span>
+            <PriceDisplay product={product} />
             {product.weight && (
               <span className="text-[10px] text-slate-400 font-medium whitespace-nowrap">
                 / {language === 'en' ? product.weight : (product.weightBn || product.weight)}

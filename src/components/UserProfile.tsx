@@ -791,7 +791,7 @@ export default function UserProfile({
                                          <div key={itemIdx} className="flex items-center justify-between group/item">
                                             <div className="flex items-center gap-4">
                                                <div className="w-10 h-10 rounded-lg overflow-hidden bg-slate-50 border border-slate-100">
-                                                  <img src={item.image} className="w-full h-full object-cover" alt={item.name} />
+                                                  <img src={item.image || undefined} className="w-full h-full object-cover" alt={item.name} />
                                                </div>
                                                <div>
                                                   <p className="text-sm font-bold text-slate-800">{language === 'en' ? item.name : item.nameBn}</p>

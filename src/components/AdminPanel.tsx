@@ -50,10 +50,10 @@ import {
   Pie,
   Cell,
 } from "recharts";
-import { supabase } from "../lib/supabase";
+import { supabase, supabaseUrl } from "../lib/supabase";
 import { syncCustomerToGoogleSheets } from "../lib/webhook";
 import { Product, Order } from "../types";
-import { PRODUCTS, CATEGORIES } from "../constants";
+import { PRODUCTS, CATEGORIES, PRICING_CONFIG } from "../constants";
 import AdminLogin from "./AdminLogin";
 
 interface AdminPanelProps {
@@ -717,10 +717,23 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
 
   const fetchProducts = async () => {
     const localProductsStr = localStorage.getItem("yummydash_custom_products");
-    let localProducts = PRODUCTS;
+    let localProducts = [...PRODUCTS];
     if (localProductsStr) {
       try {
-        localProducts = JSON.parse(localProductsStr);
+        const parsedLocal = JSON.parse(localProductsStr) as Product[];
+        if (Array.isArray(parsedLocal)) {
+          const staticIds = new Set(PRODUCTS.map(p => p.id));
+          
+          // Map static products, overriding any with local versions if they exist
+          const merged = PRODUCTS.map(sp => {
+            const lp = parsedLocal.find(p => p.id === sp.id);
+            return lp ? { ...sp, ...lp } : sp;
+          });
+          
+          // Append local products that are not present in static products
+          const extraLocal = parsedLocal.filter(lp => lp && lp.id && !staticIds.has(lp.id));
+          localProducts = [...merged, ...extraLocal];
+        }
       } catch (err) {
         console.error("Error parsing local products: ", err);
       }
@@ -2413,13 +2426,40 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
     e.preventDefault();
     setStatusMessage(null);
     try {
-      const { id, ...cleanData } = formData as any;
+      // Ensure all numeric inputs are parsed safely to avoid NaN in database or state
+      const cleanData: any = {};
+      Object.keys(formData).forEach(key => {
+        const val = (formData as any)[key];
+        if (key === 'price' || key === 'discount' || key === 'stock') {
+          const num = Number(val);
+          cleanData[key] = isNaN(num) ? 0 : num;
+        } else if (key === 'originalPrice') {
+          if (val === undefined || val === null || val === '') {
+            cleanData[key] = null;
+          } else {
+            const num = Number(val);
+            cleanData[key] = isNaN(num) ? null : num;
+          }
+        } else if (key === 'deliveryCharge') {
+          if (val === undefined || val === null || val === '') {
+            cleanData[key] = null;
+          } else {
+            const num = Number(val);
+            cleanData[key] = isNaN(num) ? null : num;
+          }
+        } else {
+          cleanData[key] = val;
+        }
+      });
+
+      // Exclude deliveryCharge and id from the DB data since deliveryCharge is NOT a db column
+      const { id, deliveryCharge, ...dbData } = cleanData;
       const dataToSave = {
-        ...cleanData,
+        ...dbData,
         updated_at: new Date().toISOString(),
       };
 
-      const saveLocalDeliveryCharge = (prodId: string, charge: number | undefined) => {
+      const saveLocalDeliveryCharge = (prodId: string, charge: number | undefined | null) => {
         try {
           const currentChargesStr = localStorage.getItem("yummydash_product_delivery_charges") || "{}";
           const currentCharges = JSON.parse(currentChargesStr);
@@ -2451,22 +2491,22 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
         if (editingId) {
           localProducts = localProducts.map((p) =>
             p.id === editingId
-              ? ({ ...p, ...formData, id: editingId } as Product)
+              ? ({ ...p, ...cleanData, id: editingId } as Product)
               : p,
           );
-          saveLocalDeliveryCharge(editingId, formData.deliveryCharge);
+          saveLocalDeliveryCharge(editingId, cleanData.deliveryCharge);
           setStatusMessage({
             text: "Product updated successfully!",
             type: "success",
           });
-          backupProductsLocally([{ ...formData, id: editingId } as Product]);
+          backupProductsLocally([{ ...cleanData, id: editingId } as Product]);
         } else {
           const newProduct: Product = {
-            ...formData,
+            ...cleanData,
             id: "prod_" + Math.random().toString(36).substring(2, 9),
           } as Product;
           localProducts.unshift(newProduct);
-          saveLocalDeliveryCharge(newProduct.id, formData.deliveryCharge);
+          saveLocalDeliveryCharge(newProduct.id, cleanData.deliveryCharge);
           setStatusMessage({
             text: "Product added successfully!",
             type: "success",
@@ -2474,10 +2514,48 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
           backupProductsLocally([newProduct]);
         }
 
-        localStorage.setItem(
-          "yummydash_custom_products",
-          JSON.stringify(localProducts),
-        );
+        // Resilient save to localStorage to handle QuotaExceededError
+        try {
+          localStorage.setItem(
+            "yummydash_custom_products",
+            JSON.stringify(localProducts),
+          );
+        } catch (storageErr) {
+          console.warn("Storage quota exceeded, removing older large base64 images...");
+          // Keep current product's image if possible, but clear older products' base64 images
+          const prunedProducts = localProducts.map((p, idx) => {
+            if (idx > 0 && p.image && p.image.startsWith("data:image")) {
+              return { ...p, image: "" };
+            }
+            return p;
+          });
+
+          try {
+            localStorage.setItem(
+              "yummydash_custom_products",
+              JSON.stringify(prunedProducts),
+            );
+          } catch (storageErr2) {
+            // Clear all base64 images (even the current one) to save the product record successfully
+            const ultraPruned = localProducts.map(p => {
+              if (p.image && p.image.startsWith("data:image")) {
+                return { ...p, image: "" };
+              }
+              return p;
+            });
+            localStorage.setItem(
+              "yummydash_custom_products",
+              JSON.stringify(ultraPruned),
+            );
+            setStatusMessage({
+              text: language === "en" 
+                ? "Product saved successfully! (Image cleared due to local storage size limits)" 
+                : "প্রোডাক্ট সফলভাবে যোগ করা হয়েছে! (লোকাল স্টোরেজ মেমোরি শেষ হওয়ায় ইমেজটি সরানো হয়েছে)",
+              type: "success",
+            });
+          }
+        }
+
         window.dispatchEvent(new Event("yummydash_products_change"));
         setEditingId(null);
         setIsAdding(false);
@@ -2486,7 +2564,7 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
       }
 
       if (editingId) {
-        saveLocalDeliveryCharge(editingId, formData.deliveryCharge);
+        saveLocalDeliveryCharge(editingId, cleanData.deliveryCharge);
         let { error } = await supabase
           .from("products")
           .update(dataToSave)
@@ -2497,7 +2575,7 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
             "Retrying database update without optional columns due to error:",
             error,
           );
-          const { originalPrice, deliveryCharge, ...staleData } = dataToSave;
+          const { originalPrice, ...staleData } = dataToSave;
           const retryRes = await supabase
             .from("products")
             .update(staleData)
@@ -2520,7 +2598,7 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
             "Retrying database insert without optional columns due to error:",
             error,
           );
-          const { originalPrice, deliveryCharge, ...staleData } = dataToSave;
+          const { originalPrice, ...staleData } = dataToSave;
           const retryRes = await supabase.from("products").insert([staleData]).select();
           error = retryRes.error;
           insertedId = retryRes.data?.[0]?.id;
@@ -2529,7 +2607,7 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
         if (error) throw error;
 
         if (insertedId) {
-          saveLocalDeliveryCharge(insertedId, formData.deliveryCharge);
+          saveLocalDeliveryCharge(insertedId, cleanData.deliveryCharge);
         } else {
           try {
             const { data: latestProds } = await supabase
@@ -2539,7 +2617,7 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
               .order("updated_at", { ascending: false })
               .limit(1);
             if (latestProds && latestProds.length > 0) {
-              saveLocalDeliveryCharge(latestProds[0].id, formData.deliveryCharge);
+              saveLocalDeliveryCharge(latestProds[0].id, cleanData.deliveryCharge);
             }
           } catch (e) {
             console.error("Error getting inserted product ID for delivery charge:", e);
@@ -2598,39 +2676,64 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
   };
 
   const handleDelete = async (id: string) => {
-    if (!window.confirm("Are you sure you want to delete this product?"))
+    if (
+      !window.confirm(
+        language === "en"
+          ? "Are you sure you want to delete this product?"
+          : "আপনি কি নিশ্চিত যে এই প্রোডাক্টটি মুছে ফেলতে চান?",
+      )
+    )
       return;
     try {
-      if (!supabase) {
-        const localProductsStr = localStorage.getItem(
-          "yummydash_custom_products",
-        );
-        let localProducts = [...PRODUCTS];
-        if (localProductsStr) {
-          try {
-            localProducts = JSON.parse(localProductsStr);
-          } catch (err) {
-            console.error("Error parsing local products in delete:", err);
-          }
+      const isUUID = (str: string) => {
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        return uuidRegex.test(str);
+      };
+
+      // Always remove from local custom products array to keep it completely in sync
+      const localProductsStr = localStorage.getItem("yummydash_custom_products");
+      let localProducts = [...PRODUCTS];
+      if (localProductsStr) {
+        try {
+          localProducts = JSON.parse(localProductsStr);
+        } catch (err) {
+          console.error("Error parsing local products in delete:", err);
         }
-        localProducts = localProducts.filter((p) => p.id !== id);
+      }
+      const originalLength = localProducts.length;
+      localProducts = localProducts.filter((p) => p.id !== id);
+
+      if (localProducts.length !== originalLength || !localProductsStr) {
         localStorage.setItem(
           "yummydash_custom_products",
           JSON.stringify(localProducts),
         );
         window.dispatchEvent(new Event("yummydash_products_change"));
-        setStatusMessage({ text: "Product deleted.", type: "success" });
-        fetchProducts();
-        return;
       }
 
-      const { error } = await supabase.from("products").delete().eq("id", id);
-      if (error) throw error;
-      setStatusMessage({ text: "Product deleted.", type: "success" });
+      // If Supabase is active and ID is a valid UUID, delete from remote database
+      if (supabase && isUUID(id)) {
+        const { error } = await supabase.from("products").delete().eq("id", id);
+        if (error) throw error;
+      }
+
+      setStatusMessage({
+        text:
+          language === "en"
+            ? "Product deleted successfully!"
+            : "প্রোডাক্ট সফলভাবে মুছে ফেলা হয়েছে!",
+        type: "success",
+      });
       fetchProducts();
     } catch (error) {
       console.error("Delete error:", error);
-      setStatusMessage({ text: "Failed to delete product.", type: "error" });
+      setStatusMessage({
+        text:
+          language === "en"
+            ? "Failed to delete product."
+            : "প্রোডাক্ট মুছে ফেলতে ব্যর্থ হয়েছে।",
+        type: "error",
+      });
     }
   };
 
@@ -2667,13 +2770,28 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
   };
 
   const clearInventory = async () => {
-    if (!window.confirm("Delete ALL products?")) return;
+    if (
+      !window.confirm(
+        language === "en"
+          ? "Are you sure you want to delete ALL products?"
+          : "আপনি কি নিশ্চিত যে সব প্রোডাক্ট মুছে ফেলতে চান?",
+      )
+    )
+      return;
     try {
+      // Always clear local custom products storage
+      localStorage.setItem("yummydash_custom_products", JSON.stringify([]));
+      window.dispatchEvent(new Event("yummydash_products_change"));
+
       if (!supabase) {
-        localStorage.setItem("yummydash_custom_products", JSON.stringify([]));
-        window.dispatchEvent(new Event("yummydash_products_change"));
         setProducts([]);
-        setStatusMessage({ text: "Inventory cleared!", type: "success" });
+        setStatusMessage({
+          text:
+            language === "en"
+              ? "All products cleared successfully (locally)!"
+              : "সব প্রোডাক্ট সফলভাবে মুছে ফেলা হয়েছে (লোকাল)!",
+          type: "success",
+        });
         return;
       }
 
@@ -2683,9 +2801,22 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
         .neq("id", "00000000-0000-0000-0000-000000000000"); // Delete everything
       if (error) throw error;
       setProducts([]);
-      setStatusMessage({ text: "Inventory cleared!", type: "success" });
-    } catch (error) {
+      setStatusMessage({
+        text:
+          language === "en"
+            ? "All products cleared from database successfully!"
+            : "সব প্রোডাক্ট ডাটাবেস থেকে সফলভাবে মুছে ফেলা হয়েছে!",
+        type: "success",
+      });
+    } catch (error: any) {
       console.error("Clear error:", error);
+      setStatusMessage({
+        text:
+          language === "en"
+            ? `Failed to clear products: ${error?.message || error}`
+            : `প্রোডাক্ট মুছে ফেলতে ব্যর্থ হয়েছে: ${error?.message || error}`,
+        type: "error",
+      });
     }
   };
 
@@ -2984,6 +3115,18 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
                   </div>
                 )}
 
+                {supabase ? (
+                  <div className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded-full border border-emerald-100 text-[10px] font-bold shrink-0 animate-in fade-in duration-300">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                    <span>{language === 'en' ? 'Supabase Connected' : 'সুপাবেস সংযুক্ত'}</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-50 text-rose-700 rounded-full border border-rose-100 text-[10px] font-bold shrink-0 animate-pulse">
+                    <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
+                    <span>{language === 'en' ? 'Supabase Local Mode' : 'লোকাল ডেমো মোড'}</span>
+                  </div>
+                )}
+
                 {statusMessage && (
                   <div
                     className={`px-4 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-widest animate-in fade-in slide-in-from-top-1 shrink-0 ${statusMessage.type === "success" ? "bg-emerald-50 text-emerald-600 border border-emerald-100" : "bg-red-50 text-red-600 border border-red-100"}`}
@@ -3027,6 +3170,13 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
                       onClick={() => {
                         setIsAdding(true);
                         setEditingId(null);
+                        
+                        // Dynamically determine the initial category based on settings or CATEGORIES
+                        const availableCats = siteSettings.companyInfo?.categories && siteSettings.companyInfo.categories.length > 0
+                          ? siteSettings.companyInfo.categories
+                          : CATEGORIES.filter(c => c.en !== "All");
+                        const firstCat = availableCats[0] || { en: "Healthy", bn: "স্বাস্থ্যকর" };
+
                         setFormData({
                           name: "",
                           nameBn: "",
@@ -3036,8 +3186,8 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
                           description: "",
                           descriptionBn: "",
                           image: "",
-                          category: "Healthy",
-                          categoryBn: "স্বাস্থ্যকর",
+                          category: firstCat.en,
+                          categoryBn: firstCat.bn,
                           isNew: false,
                           isOffer: false,
                           stock: 0,
@@ -3253,7 +3403,7 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
                                   className="w-full h-full object-cover"
                                   alt="Preview"
                                 />
-                                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                <div className="absolute inset-0 bg-black/30 flex items-center justify-center">
                                   <button
                                     type="button"
                                     onClick={() =>
@@ -3262,9 +3412,11 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
                                         image: "",
                                       }))
                                     }
-                                    className="p-2 bg-red-500 text-white rounded-full hover:scale-110 transition-transform"
+                                    className="p-2.5 bg-red-500 text-white rounded-full hover:scale-110 active:scale-95 transition-transform shadow-lg z-10 flex items-center gap-1.5 text-xs font-bold"
+                                    title="Delete Image"
                                   >
                                     <Trash2 className="w-4 h-4" />
+                                    <span>{language === "en" ? "Delete Image" : "ছবি মুছুন"}</span>
                                   </button>
                                 </div>
                               </div>
@@ -3505,13 +3657,25 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
                             </div>
                             <div className="text-right shrink-0 pr-4">
                               <div className="text-xl font-black text-slate-900 flex flex-col items-end">
-                                {p.originalPrice &&
-                                  p.originalPrice > p.price && (
-                                    <span className="text-xs font-semibold text-slate-400 line-through">
-                                      ৳{p.originalPrice}
-                                    </span>
-                                  )}
-                                <span>৳{p.price}</span>
+                                {PRICING_CONFIG.showDiscountFirst ? (
+                                  <>
+                                    <span>৳{PRICING_CONFIG.getDiscountPrice(p)}</span>
+                                    {PRICING_CONFIG.hasDiscount(p) && PRICING_CONFIG.getRegularPrice(p) && (
+                                      <span className="text-xs font-semibold text-slate-400 line-through">
+                                        ৳{PRICING_CONFIG.getRegularPrice(p)}
+                                      </span>
+                                    )}
+                                  </>
+                                ) : (
+                                  <>
+                                    {PRICING_CONFIG.hasDiscount(p) && PRICING_CONFIG.getRegularPrice(p) && (
+                                      <span className="text-xs font-semibold text-slate-400 line-through">
+                                        ৳{PRICING_CONFIG.getRegularPrice(p)}
+                                      </span>
+                                    )}
+                                    <span>৳{PRICING_CONFIG.getDiscountPrice(p)}</span>
+                                  </>
+                                )}
                               </div>
                               {p.stock !== undefined && (
                                 <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">
@@ -3577,7 +3741,7 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
                                 <div className="flex items-center gap-4">
                                   <div className="w-12 h-12 rounded-xl bg-slate-100 overflow-hidden shrink-0 border border-slate-200">
                                     <img
-                                      src={p.image}
+                                      src={p.image || undefined}
                                       className="w-full h-full object-cover"
                                       alt=""
                                     />
@@ -3607,13 +3771,25 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
                               </td>
                               <td className="px-8 py-4 border-b border-slate-50 font-black text-slate-900 text-sm">
                                 <div className="flex flex-col">
-                                  {p.originalPrice &&
-                                    p.originalPrice > p.price && (
-                                      <span className="text-xs font-semibold text-slate-400 line-through">
-                                        ৳{p.originalPrice}
-                                      </span>
-                                    )}
-                                  <span>৳{p.price}</span>
+                                  {PRICING_CONFIG.showDiscountFirst ? (
+                                    <>
+                                      <span>৳{PRICING_CONFIG.getDiscountPrice(p)}</span>
+                                      {PRICING_CONFIG.hasDiscount(p) && PRICING_CONFIG.getRegularPrice(p) && (
+                                        <span className="text-xs font-semibold text-slate-400 line-through">
+                                          ৳{PRICING_CONFIG.getRegularPrice(p)}
+                                        </span>
+                                      )}
+                                    </>
+                                  ) : (
+                                    <>
+                                      {PRICING_CONFIG.hasDiscount(p) && PRICING_CONFIG.getRegularPrice(p) && (
+                                        <span className="text-xs font-semibold text-slate-400 line-through">
+                                          ৳{PRICING_CONFIG.getRegularPrice(p)}
+                                        </span>
+                                      )}
+                                      <span>৳{PRICING_CONFIG.getDiscountPrice(p)}</span>
+                                    </>
+                                  )}
                                 </div>
                               </td>
                               <td className="px-8 py-4 border-b border-slate-50">
@@ -4320,7 +4496,7 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
                                     <div className="flex items-center gap-4">
                                       <div className="w-10 h-10 rounded-lg overflow-hidden bg-slate-100 border border-slate-100">
                                         <img
-                                          src={item.image}
+                                          src={item.image || undefined}
                                           className="w-full h-full object-cover"
                                           alt=""
                                         />
@@ -4376,6 +4552,103 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
                   className="max-w-2xl space-y-12 animate-in fade-in slide-in-from-bottom-4 duration-500"
                 >
                   <div className="space-y-8">
+                    {/* Database Configuration Status */}
+                    <div className="bg-slate-50 border border-slate-100 rounded-3xl p-6 sm:p-8 space-y-4 animate-in fade-in duration-300">
+                      <div className="flex items-center justify-between gap-4 flex-wrap">
+                        <div className="space-y-1">
+                          <h4 className="text-lg font-bold flex items-center gap-2 text-slate-900">
+                            <Database className="w-5 h-5 text-amber-600" />
+                            {language === 'en' ? 'Supabase Database Status' : 'সুপাবেস ডাটাবেস সংযোগ স্ট্যাটাস'}
+                          </h4>
+                          <p className="text-xs text-slate-500">
+                            {language === 'en' 
+                              ? 'Check your live database sync and API credentials configuration.' 
+                              : 'আপনার লাইভ ডাটাবেস সিঙ্ক এবং API ক্রেডেনশিয়াল কনফিগারেশন চেক করুন।'}
+                          </p>
+                        </div>
+                        {supabase ? (
+                          <div className="flex items-center gap-2 px-3 py-1 bg-emerald-50 text-emerald-700 rounded-full border border-emerald-200 text-xs font-bold">
+                            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                            <span>{language === 'en' ? 'Live (Connected)' : 'সংযুক্ত (লাইভ)'}</span>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2 px-3 py-1 bg-rose-50 text-rose-700 rounded-full border border-rose-200 text-xs font-bold animate-pulse">
+                            <span className="w-2 h-2 rounded-full bg-rose-500"></span>
+                            <span>{language === 'en' ? 'Local Demo Mode' : 'লোকাল ডেমো মোড (অসংযুক্ত)'}</span>
+                          </div>
+                        )}
+                      </div>
+
+                      {supabase ? (
+                        <div className="space-y-3 pt-2">
+                          <div className="bg-white border border-slate-100 rounded-2xl p-4 space-y-2">
+                            <div className="flex justify-between items-center text-xs gap-4">
+                              <span className="text-slate-400 font-medium shrink-0">Database URL:</span>
+                              <span className="font-mono text-slate-600 bg-slate-50 px-2.5 py-1 rounded-md max-w-[250px] sm:max-w-[400px] truncate block" title={supabaseUrl}>
+                                {supabaseUrl}
+                              </span>
+                            </div>
+                            <div className="flex justify-between items-center text-xs pt-1 border-t border-slate-50">
+                              <span className="text-slate-400 font-medium">Connection Type:</span>
+                              <span className="text-slate-600 font-bold">Supabase JS Client</span>
+                            </div>
+                          </div>
+                          <div className="text-xs text-emerald-600 bg-emerald-50/50 p-3 rounded-2xl border border-dashed border-emerald-100 font-medium leading-relaxed">
+                            {language === 'en' 
+                              ? '🎉 Great! Your app is connected to your Supabase database. When you add, edit, or delete products, they will hit your Supabase "products" table directly.' 
+                              : '🎉 চমৎকার! আপনার অ্যাপটি সুপাবেস ডাটাবেসের সাথে যুক্ত আছে। এখন থেকে যেকোনো প্রোডাক্ট যোগ, এডিট বা ডিলিট করলে তা সরাসরি আপনার সুপাবেস "products" টেবিলে চলে যাবে।'}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="space-y-4 pt-2">
+                          <div className="bg-rose-50/30 border border-rose-100/50 rounded-2xl p-4 sm:p-5 text-xs text-rose-950 space-y-3 leading-relaxed">
+                            <p className="font-bold text-rose-900">
+                              {language === 'en'
+                                ? 'Why is my app in Demo Mode?'
+                                : 'কেন আমার অ্যাপটি এখনো লোকাল ডেমো মোডে আছে?'}
+                            </p>
+                            <p className="text-slate-600">
+                              {language === 'en'
+                                ? 'The frontend needs Supabase API credentials to communicate with your cloud database. Currently, these environment variables are not set or are invalid.'
+                                : 'আপনার ক্লাউড ডাটাবেসের সাথে যোগাযোগের জন্য ফ্রন্টএন্ডে সুপাবেস API ক্রেডেনশিয়াল প্রয়োজন। বর্তমানে এই এনভায়রনমেন্ট ভেরিয়েবলগুলো সেট করা নেই বা সঠিক নয়।'}
+                            </p>
+                          </div>
+
+                          <div className="bg-slate-900 text-slate-100 rounded-2xl p-5 space-y-3 text-xs leading-relaxed">
+                            <p className="font-bold text-amber-400">
+                              {language === 'en' ? 'How to connect your Supabase:' : 'সুপাবেস ডাটাবেস যেভাবে কানেক্ট করবেন:'}
+                            </p>
+                            <ol className="list-decimal list-inside space-y-2 text-slate-300">
+                              <li>
+                                {language === 'en'
+                                  ? 'Go to Supabase Dashboard (supabase.com) and copy your Project URL & Anon Key.'
+                                  : 'সুপাবেস ড্যাশবোর্ডে (supabase.com) গিয়ে আপনার প্রজেক্টের URL এবং Anon Key কপি করুন।'}
+                              </li>
+                              <li>
+                                {language === 'en'
+                                  ? 'In this Google AI Studio Build UI, open the "Settings" panel (on top-right or sidebar menu).'
+                                  : 'এই গুগল এআই স্টুডিও বিল্ড (Google AI Studio Build) ইন্টারফেসের ওপরের ডানদিকের "Settings" মেনু খুলুন।'}
+                              </li>
+                              <li>
+                                {language === 'en'
+                                  ? 'Under the Environment Variables section, add these two variables:'
+                                  : 'সেখানে Environment Variables সেকশনে এই দুটি ভেরিয়েবল সেট করুন:'}
+                                <div className="bg-slate-950 p-3 rounded-xl mt-2 font-mono text-[10px] text-amber-200 border border-slate-800 space-y-1">
+                                  <div>VITE_SUPABASE_URL = <span className="text-slate-400">YOUR_PROJECT_URL</span></div>
+                                  <div>VITE_SUPABASE_ANON_KEY = <span className="text-slate-400">YOUR_ANON_KEY</span></div>
+                                </div>
+                              </li>
+                              <li>
+                                {language === 'en'
+                                  ? 'Click "Save Settings" and the platform will inject them. Refresh the page, and your products will fetch directly from Supabase!'
+                                  : 'ভেরিয়েবলগুলো যুক্ত করে সেভ করার পর পেজটি একবার রিফ্রেশ দিন। এখন সরাসরি আপনার সুপাবেস ডাটাবেস থেকে সব ডাটা লোড ও সেভ হবে!'}
+                              </li>
+                            </ol>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
                     <div className="space-y-4">
                       <h4 className="text-xl font-bold flex items-center gap-2">
                         <Layout className="w-5 h-5 text-amber-600" />
@@ -4394,11 +4667,28 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
                         <div className="flex items-center gap-6">
                           <div className="w-20 h-20 rounded-2xl bg-slate-50 border-2 border-dashed border-slate-200 flex items-center justify-center overflow-hidden">
                             {siteSettings.logoUrl ? (
-                              <img
-                                src={siteSettings.logoUrl}
-                                className="w-full h-full object-contain"
-                                alt="Logo"
-                              />
+                              <div className="relative w-full h-full group">
+                                <img
+                                  src={siteSettings.logoUrl}
+                                  className="w-full h-full object-contain"
+                                  alt="Logo"
+                                />
+                                <div className="absolute inset-0 bg-black/30 flex items-center justify-center animate-in fade-in duration-200">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setSiteSettings((prev) => ({
+                                        ...prev,
+                                        logoUrl: "",
+                                      }))
+                                    }
+                                    className="p-1.5 bg-red-500 text-white rounded-full hover:scale-110 active:scale-95 transition-transform shadow-md z-10"
+                                    title="Remove Logo"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </div>
                             ) : (
                               <TrendingUp className="w-6 h-6 text-slate-200" />
                             )}
@@ -4425,7 +4715,7 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
                           Logo Text Overlay
                         </label>
                         <input
-                          value={siteSettings.heroTitle}
+                          value={siteSettings.heroTitle || ""}
                           onChange={(e) =>
                             setSiteSettings({
                               ...siteSettings,
@@ -4455,7 +4745,7 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
                           Hero Title (EN)
                         </label>
                         <input
-                          value={siteSettings.heroTitle}
+                          value={siteSettings.heroTitle || ""}
                           onChange={(e) =>
                             setSiteSettings({
                               ...siteSettings,
@@ -4470,7 +4760,7 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
                           Hero Title (BN)
                         </label>
                         <input
-                          value={siteSettings.heroTitleBn}
+                          value={siteSettings.heroTitleBn || ""}
                           onChange={(e) =>
                             setSiteSettings({
                               ...siteSettings,
@@ -4486,7 +4776,7 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
                         </label>
                         <textarea
                           rows={3}
-                          value={siteSettings.heroDesc}
+                          value={siteSettings.heroDesc || ""}
                           onChange={(e) =>
                             setSiteSettings({
                               ...siteSettings,
@@ -4502,7 +4792,7 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
                         </label>
                         <textarea
                           rows={3}
-                          value={siteSettings.heroDescBn}
+                          value={siteSettings.heroDescBn || ""}
                           onChange={(e) =>
                             setSiteSettings({
                               ...siteSettings,
@@ -4589,7 +4879,7 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
                                   <button
                                     type="button"
                                     onClick={() => handleRemoveSlider(sld.id)}
-                                    className="absolute top-2 right-2 p-2 bg-red-50 text-red-500 rounded-full opacity-0 group-hover:opacity-100 hover:bg-red-100 transition-all font-bold"
+                                    className="absolute top-2 right-2 p-2 bg-red-50 hover:bg-red-100 text-red-600 rounded-full transition-all font-bold shadow-md z-10"
                                     title="Remove Slide"
                                   >
                                     <Trash2 className="w-3.5 h-3.5" />
@@ -4622,11 +4912,28 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
                             <div className="flex items-center gap-6">
                               <div className="w-40 h-24 rounded-2xl bg-slate-100 border-2 border-dashed border-slate-200 flex items-center justify-center overflow-hidden">
                                 {newSlider.image ? (
-                                  <img
-                                    src={newSlider.image}
-                                    className="w-full h-full object-cover"
-                                    alt="Slider Preview"
-                                  />
+                                  <div className="relative w-full h-full group">
+                                    <img
+                                      src={newSlider.image}
+                                      className="w-full h-full object-cover"
+                                      alt="Slider Preview"
+                                    />
+                                    <div className="absolute inset-0 bg-black/30 flex items-center justify-center animate-in fade-in duration-200">
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setNewSlider((prev) => ({
+                                            ...prev,
+                                            image: "",
+                                          }))
+                                        }
+                                        className="p-1.5 bg-red-500 text-white rounded-full hover:scale-110 active:scale-95 transition-transform shadow-md z-10"
+                                        title="Remove Image"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    </div>
+                                  </div>
                                 ) : (
                                   <span className="text-[10px] font-bold text-slate-400">
                                     No Image Selected
@@ -4843,7 +5150,7 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
                             <input
                               type="number"
                               min="0"
-                              value={siteSettings.companyInfo?.deliveryChargeInside !== undefined ? siteSettings.companyInfo.deliveryChargeInside : 60}
+                              value={siteSettings.companyInfo?.deliveryChargeInside ?? 60}
                               onChange={(e) => setSiteSettings({
                                 ...siteSettings,
                                 companyInfo: {
@@ -4862,7 +5169,7 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
                             <input
                               type="number"
                               min="0"
-                              value={siteSettings.companyInfo?.deliveryChargeOutside !== undefined ? siteSettings.companyInfo.deliveryChargeOutside : 120}
+                              value={siteSettings.companyInfo?.deliveryChargeOutside ?? 120}
                               onChange={(e) => setSiteSettings({
                                 ...siteSettings,
                                 companyInfo: {
@@ -4881,7 +5188,7 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
                             <input
                               type="number"
                               min="0"
-                              value={siteSettings.companyInfo?.deliveryFreeThreshold !== undefined ? siteSettings.companyInfo.deliveryFreeThreshold : 1000}
+                              value={siteSettings.companyInfo?.deliveryFreeThreshold ?? 1000}
                               onChange={(e) => setSiteSettings({
                                 ...siteSettings,
                                 companyInfo: {
@@ -4979,11 +5286,28 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
                         <div className="flex flex-col sm:flex-row items-center gap-6">
                           <div className="w-32 h-20 rounded-2xl bg-slate-100 border-2 border-dashed border-slate-200 flex items-center justify-center overflow-hidden">
                             {newCategory.image ? (
-                              <img
-                                src={newCategory.image}
-                                className="w-full h-full object-cover"
-                                alt="Category Preview"
-                              />
+                              <div className="relative w-full h-full group">
+                                <img
+                                  src={newCategory.image}
+                                  className="w-full h-full object-cover"
+                                  alt="Category Preview"
+                                />
+                                <div className="absolute inset-0 bg-black/30 flex items-center justify-center animate-in fade-in duration-200">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setNewCategory((prev) => ({
+                                        ...prev,
+                                        image: "",
+                                      }))
+                                    }
+                                    className="p-1.5 bg-red-500 text-white rounded-full hover:scale-110 active:scale-95 transition-transform shadow-md z-10"
+                                    title="Remove Image"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </div>
                             ) : (
                               <span className="text-[10px] font-bold text-slate-400">
                                 No Image

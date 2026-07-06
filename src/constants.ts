@@ -3,18 +3,19 @@ import { Product } from './types';
 export const PRODUCTS: Product[] = [
   {
     id: '1',
-    name: 'Chingri Balacao',
-    nameBn: 'Chingri Balacao',
-    price: 900,
-    discount: 850,
+    name: 'Gourmet Truffle Burger',
+    nameBn: 'গুরমেট ট্রাফল বার্গার',
+    price: 18,
+    discount: 15,
     description: 'Juicy wagyu beef patty with black truffle aioli and aged cheddar.',
     descriptionBn: 'রসালো ওয়াগিউ বিফ প্যাটি, সাথে ব্ল্যাক ট্রাফল আইওলি এবং এজেড চেডার চিজ।',
-    image: 'https://res.cloudinary.com/rbjnn5rh/image/upload/v1783255816/WhatsApp_Image_2026-07-05_at_6.32.47_PM_mooh1a.jpg',
+    image: 'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?q=80&w=800&auto=format&fit=crop',
     category: 'Burgers',
     categoryBn: 'বার্গার',
     isNew: true,
-    weight: '500g',
-    weightBn: '500 গ্রাম'
+    weight: '350g',
+    weightBn: '৩৫০ গ্রাম',
+    deliveryCharge: 60
   },
   {
     id: '2',
@@ -23,13 +24,14 @@ export const PRODUCTS: Product[] = [
     price: 24,
     discount: 20,
     description: 'Sourdough crust, fresh mozzarella, and spicy Italian pepperoni.',
-    descriptionBn: 'সোরডফ ক্রাস্ট, ফ্রেশ মোজারেলা এবং স্পাইসি ইতালীয় পেপারনি।',
+    descriptionBn: 'সোরডф ক্রাস্ট, ফ্রেশ মোজারেলা এবং স্পাইসি ইতালীয় পেপারনি।',
     image: 'https://images.unsplash.com/photo-1513104890138-7c749659a591?q=80&w=800&auto=format&fit=crop',
     category: 'Pizza',
     categoryBn: 'পিৎজা',
     isOffer: true,
     weight: '12 inch',
-    weightBn: '১২ ইঞ্চি'
+    weightBn: '১২ ইঞ্চি',
+    deliveryCharge: 0
   },
   {
     id: '3',
@@ -251,22 +253,9 @@ export const PRODUCTS: Product[] = [
     image: 'https://images.unsplash.com/photo-1586985289906-40698897450a?q=80&w=800&auto=format&fit=crop',
     category: 'Desserts',
     categoryBn: 'ডেজার্ট',
-    isNew: true
-  },
-  {
-    id: '20',
-    name: 'Red Velvet Opera Cake',
-    nameBn: 'sadik,
-    price: 12,
-    discount: 15,
-    description: 'Layers of almond sponge, beetroot-infused cream cheese, and dark chocolate ganache.',
-    descriptionBn: 'অ্যালমন্ড স্পঞ্জ, ক্রিম চিজ এবং ডার্ক চকলেট গ্যানাচে তৈরি চমৎকার লেয়ার্ড কেক।',
-    image: 'https://images.unsplash.com/photo-1586985289906-40698897450a?q=80&w=800&auto=format&fit=crop',
-    category: 'Desserts',
-    categoryBn: 'ডেজার্ট',
-    isNew: true
+    isNew: true,
+    deliveryCharge: 0
   }
-  
 ];
 
 export const CATEGORIES = [
@@ -278,3 +267,57 @@ export const CATEGORIES = [
   { en: 'Beverages', bn: 'পানীয়', image: 'https://images.unsplash.com/photo-1544145945-f904253d0c7b?q=80&w=400&auto=format&fit=crop' },
   { en: 'Fine Dining', bn: 'ফাইন ডাইনিং', image: 'https://images.unsplash.com/photo-1467003909585-2f8a72700288?q=80&w=400&auto=format&fit=crop' }
 ];
+
+export const PRICING_CONFIG = {
+  // Config: Set true to display discount/selling price first, then regular price. Set false for regular price first.
+  showDiscountFirst: true,
+
+  // Config: Set true to apply a strike-through line on the regular (original) price
+  strikeThroughRegularPrice: true,
+
+  // Helper to check if the product has a discount set and active
+  hasDiscount: (product: any): boolean => {
+    if (!product) return false;
+    const hasOriginalPrice = product.originalPrice !== undefined && product.originalPrice !== null && Number(product.originalPrice) > Number(product.price);
+    const hasDiscountPercent = product.discount !== undefined && product.discount !== null && Number(product.discount) > 0;
+    return !!(hasOriginalPrice || hasDiscountPercent);
+  },
+
+  // Helper to retrieve the regular (original) price
+  getRegularPrice: (product: any): number | null => {
+    if (!product) return null;
+    if (product.originalPrice !== undefined && product.originalPrice !== null && Number(product.originalPrice) > 0) {
+      return Number(product.originalPrice);
+    }
+    if (product.discount !== undefined && product.discount !== null && Number(product.discount) > 0) {
+      // Calculate original price based on discount percentage
+      return Math.round(Number(product.price) / (1 - Number(product.discount) / 100));
+    }
+    return null;
+  },
+
+  // Helper to retrieve the discount/active selling price
+  getDiscountPrice: (product: any): number => {
+    if (!product) return 0;
+    return Number(product.price);
+  },
+
+  // Helper to retrieve the discount percentage (either direct or calculated)
+  getDiscountPercentage: (product: any): number | null => {
+    if (!product) return null;
+    if (product.discount !== undefined && product.discount !== null && Number(product.discount) > 0) {
+      return Number(product.discount);
+    }
+    if (product.originalPrice !== undefined && product.originalPrice !== null && Number(product.originalPrice) > Number(product.price)) {
+      return Math.round(((Number(product.originalPrice) - Number(product.price)) / Number(product.originalPrice)) * 100);
+    }
+    return null;
+  }
+};
+
+export const DELIVERY_CONFIG = {
+  enabled: true,                // Whether delivery charge is enabled by default
+  chargeInside: 60,             // Default delivery charge inside Dhaka/City
+  chargeOutside: 130,           // Default delivery charge outside Dhaka/City
+  freeThreshold: 1000           // Free delivery threshold
+};
