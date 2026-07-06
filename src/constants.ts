@@ -1,4 +1,4 @@
-import { Product } from './types';
+ import { Product } from './types';
 
 export const PRODUCTS: Product[] = [
   {
@@ -7,15 +7,15 @@ export const PRODUCTS: Product[] = [
     nameBn: 'চিংড়ি বালাচাও',
     price: 900,
     discount: 850,
-    description: 'A premium, crispy, and savory Bangladeshi fusion delicacy made with dried shrimp, fried onions, garlic, and special spices. Perfectly healthy, nutritious, and ready to elevate your daily meals.',
-    descriptionBn: 'শুকনো চিংড়ি, মচমচে ভাজা পেঁয়াজ, রসুন এবং বিশেষ মশলার মিশ্রণে তৈরি একটি প্রিমিয়াম ও সুস্বাদু ঐতিহ্যবাহী খাবার। এটি সম্পূর্ণ স্বাস্থ্যসম্মত, পুষ্টিকর এবং আপনার প্রতিদিনের খাবারের স্বাদ বাড়িয়ে তুলতে দারুণ উপযোগী।',
+    description: 'Shrimp Balachao is a traditional and flavorful spicy delicacy made with shrimp, garlic, onions, dried chilies, and a blend of aromatic spices. Known for its rich taste and distinctive aroma, it pairs perfectly with steamed rice, khichuri, pulao, paratha, or bread. When prepared and stored properly, Shrimp Balachao has a long shelf life and adds a delicious',
+    descriptionBn: 'চিংড়ি বালাচাও একটি ঐতিহ্যবাহী ও সুস্বাদু ঝাল খাবার, যা চিংড়ি, রসুন, পেঁয়াজ, শুকনা মরিচ এবং বিভিন্ন মসলার সমন্বয়ে তৈরি করা হয়। এর অনন্য স্বাদ ও মনমুগ্ধকর ঘ্রাণ ভাত, খিচুড়ি, পোলাও, পরোটা কিংবা রুটির সঙ্গে দারুণ মানিয়ে যায়। সঠিকভাবে প্রস্তুত ও সংরক্ষণ করলে এটি দীর্ঘদিন ভালো থাকে এবং প্রতিটি খাবারে যোগ করে বাড়তি স্বাদ।',
     image: 'https://res.cloudinary.com/rbjnn5rh/image/upload/v1783367964/df_rffync.jpg',
-    category: 'Healthy',
+    category: 'Combo',
     categoryBn: 'হেলদি',
     isNew: true,
-    weight: '200g',
-    weightBn: '২০০ গ্রাম',
-    deliveryCharge: 60
+    weight: '500g',
+    weightBn: '৫০০ গ্রাম',
+    deliveryCharge: o
 },
   {
     id: '2',
