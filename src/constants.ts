@@ -269,6 +269,34 @@ export const PRODUCTS: Product[] = [
     categoryBn: 'ডেজার্ট',
     isNew: true,
     deliveryCharge: 0
+  },
+  {
+    id: '22',
+    name: 'Red Velvet Opera Cake',
+    nameBn: 'রেড ভেলভেট অপেরা কেক',
+    price: 12,
+    discount: 15,
+    description: 'Layers of almond sponge, beetroot-infused cream cheese, and dark chocolate ganache.',
+    descriptionBn: 'অ্যালমন্ড স্পঞ্জ, ক্রিম চিজ এবং ডার্ক চকলেট গ্যানাচে তৈরি চমৎকার লেয়ার্ড কেক।',
+    image: 'https://images.unsplash.com/photo-1586985289906-40698897450a?q=80&w=800&auto=format&fit=crop',
+    category: 'Desserts',
+    categoryBn: 'ডেজার্ট',
+    isNew: true,
+    deliveryCharge: 0
+  },
+  {
+    id: '23',
+    name: 'Red Velvet Opera Cake',
+    nameBn: 'রেড ভেলভেট অপেরা কেক',
+    price: 12,
+    discount: 15,
+    description: 'Layers of almond sponge, beetroot-infused cream cheese, and dark chocolate ganache.',
+    descriptionBn: 'অ্যালমন্ড স্পঞ্জ, ক্রিম চিজ এবং ডার্ক চকলেট গ্যানাচে তৈরি চমৎকার লেয়ার্ড কেক।',
+    image: 'https://images.unsplash.com/photo-1586985289906-40698897450a?q=80&w=800&auto=format&fit=crop',
+    category: 'Desserts',
+    categoryBn: 'ডেজার্ট',
+    isNew: true,
+    deliveryCharge: 0
   }
 ];
 

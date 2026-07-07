@@ -2517,131 +2517,141 @@ export default function App() {
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 24 }}
               transition={{ type: "spring", duration: 0.45, bounce: 0.1 }}
-              className="bg-white rounded-3xl sm:rounded-[2.5rem] w-full max-w-5xl overflow-hidden relative z-10 flex flex-col md:flex-row h-full max-h-[90vh] md:h-auto"
+              className="bg-white rounded-3xl sm:rounded-[2.5rem] w-full max-w-5xl overflow-hidden relative z-10 flex flex-col md:flex-row h-[85vh] md:h-auto max-h-[85vh] md:max-h-[90vh]"
             >
               <button 
                 onClick={() => setSelectedProduct(null)}
-                className="absolute top-6 right-6 p-2 bg-white/80 backdrop-blur-sm rounded-full text-slate-900 hover:bg-slate-100 transition-colors z-20"
+                className="absolute top-4 right-4 md:top-6 md:right-6 p-1.5 md:p-2 bg-white/80 backdrop-blur-sm rounded-full text-slate-900 hover:bg-slate-100 transition-colors z-20 shadow-sm border border-slate-100"
               >
-                <X className="w-6 h-6" />
+                <X className="w-5 h-5 md:w-6 md:h-6" />
               </button>
               
-              <div className="md:w-1/2 relative group">
+              <div className="h-[30vh] md:h-auto md:w-1/2 relative group shrink-0">
                 <img 
                   src={selectedProduct.image || undefined} 
                   alt={selectedProduct.name}
-                  className="w-full h-[40vh] md:h-full object-cover"
+                  className="w-full h-full object-cover"
                 />
               </div>
 
-              <div className="md:w-1/2 p-8 sm:p-12 flex flex-col justify-center space-y-8 overflow-y-auto">
-                  <div className="space-y-4">
-                    <div className="flex items-center gap-3">
-                      <span className="text-xs font-bold uppercase tracking-widest text-amber-600 bg-amber-50 px-3 py-1 rounded-full">
-                        {language === 'en' ? selectedProduct.category : selectedProduct.categoryBn}
+              <div className="flex-1 flex flex-col h-[55vh] md:h-auto md:w-1/2 overflow-hidden bg-white">
+                {/* Header Section: Fixed at the top */}
+                <div className="p-5 sm:p-8 md:p-10 pb-3 sm:pb-4 space-y-3 md:space-y-4 shrink-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[10px] md:text-xs font-bold uppercase tracking-wider text-amber-600 bg-amber-50 px-2.5 py-0.5 md:px-3 md:py-1 rounded-full">
+                      {language === 'en' ? selectedProduct.category : selectedProduct.categoryBn}
+                    </span>
+                    {selectedProduct.isNew && (
+                      <span className="text-[10px] md:text-xs font-bold uppercase tracking-wider text-emerald-600 bg-emerald-50 px-2.5 py-0.5 md:px-3 md:py-1 rounded-full">
+                        {t.new}
                       </span>
-                      {selectedProduct.isNew && (
-                        <span className="text-xs font-bold uppercase tracking-widest text-emerald-600 bg-emerald-50 px-3 py-1 rounded-full">
-                          {t.new}
-                        </span>
-                      )}
-                      {selectedProduct.discount && (
-                        <span className="text-xs font-bold uppercase tracking-widest text-red-600 bg-red-50 px-3 py-1 rounded-full">
-                          {selectedProduct.discount}% OFF
+                    )}
+                    {selectedProduct.discount && (
+                      <span className="text-[10px] md:text-xs font-bold uppercase tracking-wider text-red-600 bg-red-50 px-2.5 py-0.5 md:px-3 md:py-1 rounded-full">
+                        {selectedProduct.discount}% OFF
+                      </span>
+                    )}
+                  </div>
+                  
+                  <h2 className="text-xl sm:text-2xl md:text-3xl lg:text-4xl font-extrabold leading-tight tracking-tight text-slate-900">
+                    {language === 'en' ? selectedProduct.name : selectedProduct.nameBn}
+                    {selectedProduct.weight && (
+                      <span className="text-sm sm:text-base md:text-lg font-light text-slate-400 block sm:inline sm:ml-2 mt-1 sm:mt-0">
+                        ({language === 'en' ? selectedProduct.weight : (selectedProduct.weightBn || selectedProduct.weight)})
+                      </span>
+                    )}
+                  </h2>
+
+                  <div className="flex items-center gap-3 flex-wrap pt-1 border-t border-slate-50 mt-2">
+                    <div className="flex items-baseline gap-2">
+                      <PriceDisplay 
+                        product={selectedProduct} 
+                        className="flex items-baseline gap-1.5 md:gap-2 flex-wrap" 
+                        priceClassName="text-xl sm:text-2xl md:text-3xl font-black text-amber-600" 
+                        regularPriceClassName="text-xs sm:text-sm md:text-base font-semibold text-slate-400" 
+                      />
+                      {selectedProduct.weight && (
+                        <span className="text-[9px] md:text-xs font-bold text-slate-400 uppercase tracking-widest bg-slate-50 px-2 py-0.5 md:px-3 md:py-1 rounded-full border border-slate-100">
+                          {language === 'en' ? selectedProduct.weight : (selectedProduct.weightBn || selectedProduct.weight)}
                         </span>
                       )}
                     </div>
-                    <h2 className="text-4xl sm:text-5xl font-bold leading-tight tracking-tight">
-                      {language === 'en' ? selectedProduct.name : selectedProduct.nameBn}
-                      {selectedProduct.weight && (
-                        <span className="text-2xl sm:text-3xl font-light text-slate-400 block sm:inline sm:ml-3">
-                          ({language === 'en' ? selectedProduct.weight : (selectedProduct.weightBn || selectedProduct.weight)})
+                    {selectedProduct.stock !== undefined && (
+                      <div className="flex items-center gap-1 px-2 py-0.5 md:px-3 md:py-1 bg-slate-50 rounded-full border border-slate-100">
+                        <Package className="w-3 h-3 text-slate-400" />
+                        <span className="text-[9px] md:text-[10px] font-black uppercase tracking-widest text-slate-400">
+                          {selectedProduct.stock} {language === 'en' ? 'Units left' : 'ইউনিট বাকি আছে'}
                         </span>
-                      )}
-                    </h2>
-                    <div className="flex items-center gap-4 flex-wrap">
-                      <div className="flex items-baseline gap-2 flex-wrap">
-                        <PriceDisplay 
-                          product={selectedProduct} 
-                          className="flex items-baseline gap-2 flex-wrap" 
-                          priceClassName="text-3xl font-extrabold text-amber-600" 
-                          regularPriceClassName="text-lg font-semibold text-slate-400" 
-                        />
-                        {selectedProduct.weight && (
-                          <span className="text-xs font-bold text-slate-400 uppercase tracking-widest bg-slate-50 px-3 py-1 rounded-full border border-slate-100">
-                            {language === 'en' ? selectedProduct.weight : (selectedProduct.weightBn || selectedProduct.weight)}
-                          </span>
-                        )}
                       </div>
-                      {selectedProduct.stock !== undefined && (
-                        <div className="flex items-center gap-2 px-3 py-1 bg-slate-50 rounded-full border border-slate-100">
-                          <Package className="w-3 h-3 text-slate-400" />
-                          <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">
-                            {selectedProduct.stock} {language === 'en' ? 'Units left' : 'ইউনিট বাকি আছে'}
+                    )}
+                    {/* Delivery Charge Indicator */}
+                    {(() => {
+                      const delChargeText = (() => {
+                        if (selectedProduct.deliveryCharge !== undefined && selectedProduct.deliveryCharge !== null) {
+                          return selectedProduct.deliveryCharge === 0 
+                            ? (language === 'en' ? 'FREE' : 'ফ্রি') 
+                            : `৳${selectedProduct.deliveryCharge}`;
+                        }
+                        if (!siteSettings.companyInfo?.deliveryChargeEnabled) {
+                          return language === 'en' ? 'FREE' : 'ফ্রি';
+                        }
+                        const inside = siteSettings.companyInfo?.deliveryChargeInside ?? 60;
+                        const outside = siteSettings.companyInfo?.deliveryChargeOutside ?? 120;
+                        if (inside === 0 && outside === 0) {
+                          return language === 'en' ? 'FREE' : 'ফ্রি';
+                        }
+                        if (inside === outside) {
+                          return `৳${inside}`;
+                        }
+                        return language === 'en' 
+                          ? `৳${inside} (Inside) / ৳${outside} (Outside)` 
+                          : `৳${inside} (ভিতরে) / ৳${outside} (বাইরে)`;
+                      })();
+
+                      const isFree = delChargeText === 'FREE' || delChargeText === 'ফ্রি';
+
+                      return (
+                        <div className={`flex items-center gap-1.5 px-2 py-0.5 md:px-3 md:py-1 rounded-full border ${
+                          isFree 
+                            ? 'bg-emerald-50 border-emerald-100 text-emerald-700' 
+                            : 'bg-amber-50 border-amber-100 text-slate-500'
+                        }`}>
+                          <Truck className={`w-3 h-3 md:w-3.5 md:h-3.5 ${isFree ? 'text-emerald-600' : 'text-amber-600'}`} />
+                          <span className="text-[9px] md:text-[10px] font-black uppercase tracking-widest">
+                            {language === 'en' ? 'Delivery: ' : 'ডেলিভারি চার্জ: '}
+                            <span className={`font-extrabold ${isFree ? 'text-emerald-600 font-black' : 'text-amber-600'}`}>
+                              {delChargeText}
+                            </span>
                           </span>
                         </div>
-                      )}
-                      {/* Delivery Charge Indicator */}
-                      {(() => {
-                        const delChargeText = (() => {
-                          if (selectedProduct.deliveryCharge !== undefined && selectedProduct.deliveryCharge !== null) {
-                            return selectedProduct.deliveryCharge === 0 
-                              ? (language === 'en' ? 'FREE' : 'ফ্রি') 
-                              : `৳${selectedProduct.deliveryCharge}`;
-                          }
-                          if (!siteSettings.companyInfo?.deliveryChargeEnabled) {
-                            return language === 'en' ? 'FREE' : 'ফ্রি';
-                          }
-                          const inside = siteSettings.companyInfo?.deliveryChargeInside ?? 60;
-                          const outside = siteSettings.companyInfo?.deliveryChargeOutside ?? 120;
-                          if (inside === 0 && outside === 0) {
-                            return language === 'en' ? 'FREE' : 'ফ্রি';
-                          }
-                          if (inside === outside) {
-                            return `৳${inside}`;
-                          }
-                          return language === 'en' 
-                            ? `৳${inside} (Inside) / ৳${outside} (Outside)` 
-                            : `৳${inside} (ভিতরে) / ৳${outside} (বাইরে)`;
-                        })();
-
-                        const isFree = delChargeText === 'FREE' || delChargeText === 'ফ্রি';
-
-                        return (
-                          <div className={`flex items-center gap-2 px-3 py-1 rounded-full border ${
-                            isFree 
-                              ? 'bg-emerald-50 border-emerald-100 text-emerald-700' 
-                              : 'bg-amber-50 border-amber-100 text-slate-500'
-                          }`}>
-                            <Truck className={`w-3.5 h-3.5 ${isFree ? 'text-emerald-600' : 'text-amber-600'}`} />
-                            <span className="text-[10px] font-black uppercase tracking-widest">
-                              {language === 'en' ? 'Delivery: ' : 'ডেলিভারি চার্জ: '}
-                              <span className={`font-extrabold ${isFree ? 'text-emerald-600 font-black' : 'text-amber-600'}`}>
-                                {delChargeText}
-                              </span>
-                            </span>
-                          </div>
-                        );
-                      })()}
-                    </div>
+                      );
+                    })()}
                   </div>
-  
-                  <p className="text-slate-600 leading-relaxed font-light text-lg">
+                </div>
+
+                {/* Body Section: Smart Inner Scrolling for Description */}
+                <div className="px-5 sm:px-8 md:px-10 py-3 sm:py-4 overflow-y-auto flex-1 min-h-0 border-t border-b border-slate-50 bg-slate-50/20 custom-scrollbar-thin">
+                  <span className="text-[9px] md:text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block">
+                    {language === 'en' ? 'Description' : 'খাবারের বিবরণ'}
+                  </span>
+                  <p className="text-xs sm:text-sm md:text-base text-slate-600 leading-relaxed font-normal">
                     {language === 'en' ? selectedProduct.description : selectedProduct.descriptionBn}
                   </p>
-  
-                  <div className="space-y-4 pt-4">
-                    <button 
-                      onClick={() => {
-                        addToCart(selectedProduct);
-                        setSelectedProduct(null);
-                      }}
-                      className="w-full py-5 bg-slate-900 text-white rounded-2xl font-bold hover:bg-amber-600 transition-all duration-300 flex items-center justify-center gap-4 text-lg active:scale-95 shadow-xl shadow-slate-900/10"
-                    >
-                      {t.addCollection}
-                      <ShoppingBag className="w-5 h-5" />
-                    </button>
-                  <p className="text-center text-xs text-slate-400 uppercase tracking-widest">
+                </div>
+
+                {/* Footer Section: Fixed at the bottom */}
+                <div className="p-5 sm:p-8 md:p-10 pt-3 sm:pt-4 space-y-3 shrink-0 bg-white border-t border-slate-50">
+                  <button 
+                    onClick={() => {
+                      addToCart(selectedProduct);
+                      setSelectedProduct(null);
+                    }}
+                    className="w-full py-3.5 sm:py-4 bg-slate-900 text-white rounded-2xl font-bold hover:bg-amber-600 transition-all duration-300 flex items-center justify-center gap-3 text-sm sm:text-base md:text-lg active:scale-95 shadow-xl shadow-slate-900/10"
+                  >
+                    {t.addCollection}
+                    <ShoppingBag className="w-4 h-4 sm:w-5 sm:h-5" />
+                  </button>
+                  <p className="text-center text-[10px] md:text-xs text-slate-400 uppercase tracking-widest">
                     {t.deliveryNote}
                   </p>
                 </div>
