@@ -9,7 +9,7 @@ export const PRODUCTS: Product[] = [
     "discount": 850,
     "description": "A traditional dried shrimp pickle (balachao) paired with a special spice mix – a combo pack for a complete Bengali meal experience. Made with sun-dried shrimp, fried onions, and aromatic spices.",
     "descriptionBn": "শুকনো চিংড়ি, ভাজা পেঁয়াজ ও মসলার মিশ্রণে তৈরি ঐতিহ্যবাহী চিংড়ি বালাচাও – সাথে বিশেষ মসলা মিশ্রণ। একেবারে ঘরোয়া স্বাদে ভাত বা রুটির সাথে পরিবেশন করুন।",
-    "image": null,
+    "image": nhttps://res.cloudinary.com/rbjnn5rh/image/upload/v1783375924/photo_1_2026-07-07_04-11-21_krsuss.jpgull,
     "category": "Pickles & Balachao",
     "categoryBn": "আচার ও বালাচাও",
     "isNew": false,
