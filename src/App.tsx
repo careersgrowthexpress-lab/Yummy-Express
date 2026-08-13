@@ -1015,13 +1015,13 @@ export default function App() {
         console.warn("Supabase products warning:", error);
         setProducts(sanitizeUniqueProducts(applyCustomCharges(baseProducts)));
       } else {
-        // If Supabase is active and returns data successfully, we should use it.
-        // However, if the database is completely empty (0 products) and there is no local custom products
-        // (meaning it's a first-time visit with an unseeded database), we can fallback to baseProducts (demo products)
-        // so the site doesn't look blank. But if local custom products was cleared explicitly (set to []),
-        // or if the user wants an empty catalog, we respect that.
-        const dbProds = (data.length === 0 && localProductsStr === null) ? baseProducts : (data as Product[]);
-        setProducts(sanitizeUniqueProducts(applyCustomCharges(dbProds)));
+        const dbProds = (data || []) as Product[];
+        const dbIds = new Set(dbProds.map(p => p.id));
+        const extraLocal = baseProducts.filter(p => p && p.id && !dbIds.has(p.id));
+        const combined = (dbProds.length === 0 && localProductsStr === null) 
+          ? baseProducts 
+          : [...dbProds, ...extraLocal];
+        setProducts(sanitizeUniqueProducts(applyCustomCharges(combined)));
       }
     };
 

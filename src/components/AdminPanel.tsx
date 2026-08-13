@@ -50,7 +50,8 @@ import {
   Pie,
   Cell,
 } from "recharts";
-import { supabase, supabaseUrl } from "../lib/supabase";
+import { supabase, supabaseUrl, supabaseAnonKey, isUsingCustomCredentials, saveCustomSupabaseCredentials, clearCustomSupabaseCredentials } from "../lib/supabase";
+import { SUPABASE_SETUP_SQL } from "../lib/supabaseSchema";
 import { syncCustomerToGoogleSheets } from "../lib/webhook";
 import { Product, Order } from "../types";
 import { PRODUCTS, CATEGORIES, PRICING_CONFIG } from "../constants";
@@ -106,6 +107,16 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
     deliveryCharge: undefined,
   });
   const [uploading, setUploading] = useState(false);
+
+  // Supabase Custom Config State
+  const [customSupabaseUrlInput, setCustomSupabaseUrlInput] = useState(
+    typeof window !== 'undefined' ? localStorage.getItem('custom_supabase_url') || '' : ''
+  );
+  const [customSupabaseKeyInput, setCustomSupabaseKeyInput] = useState(
+    typeof window !== 'undefined' ? localStorage.getItem('custom_supabase_anon_key') || '' : ''
+  );
+  const [showSqlModal, setShowSqlModal] = useState(false);
+  const [copiedSql, setCopiedSql] = useState(false);
 
   // Admins state
   const [admins, setAdmins] = useState<
@@ -770,15 +781,23 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
         .from("products")
         .select("*")
         .order("updated_at", { ascending: false });
-      if (error) throw error;
-      const dbProds = data as Product[];
-      const mergedProds = applyCustomCharges(dbProds);
-      setProducts(mergedProds);
-      if (mergedProds && mergedProds.length > 0) {
-        backupProductsLocally(mergedProds);
+      if (error) {
+        console.warn("Supabase products fetch warning:", error);
+        setProducts(applyCustomCharges(localProducts));
+      } else {
+        const dbProds = (data || []) as Product[];
+        const dbIds = new Set(dbProds.map(p => p.id));
+        const extraLocal = localProducts.filter(lp => lp && lp.id && !dbIds.has(lp.id));
+        const combined = [...dbProds, ...extraLocal];
+        const mergedProds = applyCustomCharges(combined.length > 0 ? combined : localProducts);
+        setProducts(mergedProds);
+        if (mergedProds && mergedProds.length > 0) {
+          backupProductsLocally(mergedProds);
+        }
       }
     } catch (error) {
       console.warn("Supabase products warning:", error);
+      setProducts(applyCustomCharges(localProducts));
     } finally {
       setLoading(false);
     }
@@ -2474,168 +2493,124 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
         }
       };
 
-      if (!supabase) {
-        // Fallback for when there's no configured database
-        const localProductsStr = localStorage.getItem(
-          "yummydash_custom_products",
+      // Always save locally FIRST so product is never lost or blocked
+      const localProductsStr = localStorage.getItem("yummydash_custom_products");
+      let localProducts = [...PRODUCTS];
+      if (localProductsStr) {
+        try {
+          localProducts = JSON.parse(localProductsStr);
+        } catch (err) {
+          console.error("Error parsing local products in save:", err);
+        }
+      }
+
+      const activeProdId = editingId || ("prod_" + Math.random().toString(36).substring(2, 9));
+      const fullProductToSave: Product = {
+        ...cleanData,
+        id: activeProdId,
+      } as Product;
+
+      if (editingId) {
+        localProducts = localProducts.map((p) =>
+          p.id === editingId ? fullProductToSave : p
         );
-        let localProducts = [...PRODUCTS];
-        if (localProductsStr) {
-          try {
-            localProducts = JSON.parse(localProductsStr);
-          } catch (err) {
-            console.error("Error parsing local products in save:", err);
+        saveLocalDeliveryCharge(editingId, cleanData.deliveryCharge);
+      } else {
+        localProducts.unshift(fullProductToSave);
+        saveLocalDeliveryCharge(activeProdId, cleanData.deliveryCharge);
+      }
+
+      backupProductsLocally(localProducts);
+
+      // Save to localStorage with fallback for quota limits
+      try {
+        localStorage.setItem(
+          "yummydash_custom_products",
+          JSON.stringify(localProducts)
+        );
+      } catch (storageErr) {
+        console.warn("Storage quota exceeded, pruning older images...");
+        const prunedProducts = localProducts.map((p, idx) => {
+          if (idx > 0 && p.image && p.image.startsWith("data:image")) {
+            return { ...p, image: "" };
           }
-        }
+          return p;
+        });
 
-        if (editingId) {
-          localProducts = localProducts.map((p) =>
-            p.id === editingId
-              ? ({ ...p, ...cleanData, id: editingId } as Product)
-              : p,
-          );
-          saveLocalDeliveryCharge(editingId, cleanData.deliveryCharge);
-          setStatusMessage({
-            text: "Product updated successfully!",
-            type: "success",
-          });
-          backupProductsLocally([{ ...cleanData, id: editingId } as Product]);
-        } else {
-          const newProduct: Product = {
-            ...cleanData,
-            id: "prod_" + Math.random().toString(36).substring(2, 9),
-          } as Product;
-          localProducts.unshift(newProduct);
-          saveLocalDeliveryCharge(newProduct.id, cleanData.deliveryCharge);
-          setStatusMessage({
-            text: "Product added successfully!",
-            type: "success",
-          });
-          backupProductsLocally([newProduct]);
-        }
-
-        // Resilient save to localStorage to handle QuotaExceededError
         try {
           localStorage.setItem(
             "yummydash_custom_products",
-            JSON.stringify(localProducts),
+            JSON.stringify(prunedProducts)
           );
-        } catch (storageErr) {
-          console.warn("Storage quota exceeded, removing older large base64 images...");
-          // Keep current product's image if possible, but clear older products' base64 images
-          const prunedProducts = localProducts.map((p, idx) => {
-            if (idx > 0 && p.image && p.image.startsWith("data:image")) {
+        } catch (storageErr2) {
+          const ultraPruned = localProducts.map((p) => {
+            if (p.image && p.image.startsWith("data:image")) {
               return { ...p, image: "" };
             }
             return p;
           });
-
-          try {
-            localStorage.setItem(
-              "yummydash_custom_products",
-              JSON.stringify(prunedProducts),
-            );
-          } catch (storageErr2) {
-            // Clear all base64 images (even the current one) to save the product record successfully
-            const ultraPruned = localProducts.map(p => {
-              if (p.image && p.image.startsWith("data:image")) {
-                return { ...p, image: "" };
-              }
-              return p;
-            });
-            localStorage.setItem(
-              "yummydash_custom_products",
-              JSON.stringify(ultraPruned),
-            );
-            setStatusMessage({
-              text: language === "en" 
-                ? "Product saved successfully! (Image cleared due to local storage size limits)" 
-                : "প্রোডাক্ট সফলভাবে যোগ করা হয়েছে! (লোকাল স্টোরেজ মেমোরি শেষ হওয়ায় ইমেজটি সরানো হয়েছে)",
-              type: "success",
-            });
-          }
+          localStorage.setItem(
+            "yummydash_custom_products",
+            JSON.stringify(ultraPruned)
+          );
         }
-
-        window.dispatchEvent(new Event("yummydash_products_change"));
-        setEditingId(null);
-        setIsAdding(false);
-        fetchProducts();
-        return;
       }
 
-      if (editingId) {
-        saveLocalDeliveryCharge(editingId, cleanData.deliveryCharge);
-        let { error } = await supabase
-          .from("products")
-          .update(dataToSave)
-          .eq("id", editingId);
-
-        if (error) {
-          console.warn(
-            "Retrying database update without optional columns due to error:",
-            error,
-          );
-          const { originalPrice, ...staleData } = dataToSave;
-          const retryRes = await supabase
-            .from("products")
-            .update(staleData)
-            .eq("id", editingId);
-          error = retryRes.error;
-        }
-
-        if (error) throw error;
-        setStatusMessage({
-          text: "Product updated successfully!",
-          type: "success",
-        });
-      } else {
-        let res = await supabase.from("products").insert([dataToSave]).select();
-        let error = res.error;
-        let insertedId = res.data?.[0]?.id;
-
-        if (error) {
-          console.warn(
-            "Retrying database insert without optional columns due to error:",
-            error,
-          );
-          const { originalPrice, ...staleData } = dataToSave;
-          const retryRes = await supabase.from("products").insert([staleData]).select();
-          error = retryRes.error;
-          insertedId = retryRes.data?.[0]?.id;
-        }
-
-        if (error) throw error;
-
-        if (insertedId) {
-          saveLocalDeliveryCharge(insertedId, cleanData.deliveryCharge);
-        } else {
-          try {
-            const { data: latestProds } = await supabase
+      // Sync with Supabase if available
+      if (supabase) {
+        try {
+          if (editingId) {
+            let { error } = await supabase
               .from("products")
-              .select("id")
-              .eq("name", dataToSave.name)
-              .order("updated_at", { ascending: false })
-              .limit(1);
-            if (latestProds && latestProds.length > 0) {
-              saveLocalDeliveryCharge(latestProds[0].id, cleanData.deliveryCharge);
-            }
-          } catch (e) {
-            console.error("Error getting inserted product ID for delivery charge:", e);
-          }
-        }
+              .update(dataToSave)
+              .eq("id", editingId);
 
-        setStatusMessage({
-          text: "Product added successfully!",
-          type: "success",
-        });
+            if (error) {
+              console.warn("Database update retry without optional columns:", error);
+              const { originalPrice, ...staleData } = dataToSave;
+              await supabase
+                .from("products")
+                .update(staleData)
+                .eq("id", editingId);
+            }
+          } else {
+            let res = await supabase.from("products").insert([dataToSave]).select();
+            let error = res.error;
+            let insertedId = res.data?.[0]?.id;
+
+            if (error) {
+              console.warn("Database insert retry without optional columns:", error);
+              const { originalPrice, ...staleData } = dataToSave;
+              const retryRes = await supabase.from("products").insert([staleData]).select();
+              insertedId = retryRes.data?.[0]?.id;
+            }
+
+            if (insertedId) {
+              saveLocalDeliveryCharge(insertedId, cleanData.deliveryCharge);
+            }
+          }
+        } catch (sbErr) {
+          console.warn("Supabase sync warning (product saved locally):", sbErr);
+        }
       }
 
+      setStatusMessage({
+        text: editingId
+          ? (language === "en" ? "Product updated successfully!" : "প্রোডাক্ট সফলভাবে আপডেট করা হয়েছে!")
+          : (language === "en" ? "Product added successfully!" : "প্রোডাক্ট সফলভাবে যোগ করা হয়েছে!"),
+        type: "success",
+      });
+
+      window.dispatchEvent(new Event("yummydash_products_change"));
       setEditingId(null);
       setIsAdding(false);
-      fetchProducts();
+      await fetchProducts();
     } catch (error) {
       console.error("Save error:", error);
-      setStatusMessage({ text: "Failed to save product.", type: "error" });
+      setStatusMessage({ 
+        text: language === "en" ? "Failed to save product." : "প্রোডাক্ট সেভ করতে সমস্যা হয়েছে।", 
+        type: "error" 
+      });
     }
   };
 
@@ -2713,8 +2688,12 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
 
       // If Supabase is active and ID is a valid UUID, delete from remote database
       if (supabase && isUUID(id)) {
-        const { error } = await supabase.from("products").delete().eq("id", id);
-        if (error) throw error;
+        try {
+          const { error } = await supabase.from("products").delete().eq("id", id);
+          if (error) console.warn("Supabase delete warning:", error);
+        } catch (sbErr) {
+          console.warn("Supabase delete exception:", sbErr);
+        }
       }
 
       setStatusMessage({
@@ -4552,101 +4531,140 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
                   className="max-w-2xl space-y-12 animate-in fade-in slide-in-from-bottom-4 duration-500"
                 >
                   <div className="space-y-8">
-                    {/* Database Configuration Status */}
-                    <div className="bg-slate-50 border border-slate-100 rounded-3xl p-6 sm:p-8 space-y-4 animate-in fade-in duration-300">
-                      <div className="flex items-center justify-between gap-4 flex-wrap">
+                    {/* Interactive Supabase Connection Manager */}
+                    <div className="bg-slate-50 border border-slate-200 rounded-3xl p-6 sm:p-8 space-y-6 animate-in fade-in duration-300 shadow-sm">
+                      <div className="flex items-center justify-between gap-4 flex-wrap pb-4 border-b border-slate-200/60">
                         <div className="space-y-1">
                           <h4 className="text-lg font-bold flex items-center gap-2 text-slate-900">
                             <Database className="w-5 h-5 text-amber-600" />
-                            {language === 'en' ? 'Supabase Database Status' : 'সুপাবেস ডাটাবেস সংযোগ স্ট্যাটাস'}
+                            {language === 'en' ? 'Supabase Database Connection' : 'সুপাবেস ডাটাবেস সংযোগ ও সেটআপ'}
                           </h4>
                           <p className="text-xs text-slate-500">
                             {language === 'en' 
-                              ? 'Check your live database sync and API credentials configuration.' 
-                              : 'আপনার লাইভ ডাটাবেস সিঙ্ক এবং API ক্রেডেনশিয়াল কনফিগারেশন চেক করুন।'}
+                              ? 'Connect your custom Supabase database directly or use our live cloud demo.' 
+                              : 'আপনার নিজস্ব সুপাবেস ডাটাবেস প্রজেক্ট সরাসরি যুক্ত করুন অথবা ডিফল্ট লাইভ সার্ভার ব্যবহার করুন।'}
                           </p>
                         </div>
                         {supabase ? (
-                          <div className="flex items-center gap-2 px-3 py-1 bg-emerald-50 text-emerald-700 rounded-full border border-emerald-200 text-xs font-bold">
-                            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                            <span>{language === 'en' ? 'Live (Connected)' : 'সংযুক্ত (লাইভ)'}</span>
+                          <div className="flex items-center gap-2 px-3.5 py-1.5 bg-emerald-500 text-white rounded-full text-xs font-bold shadow-sm">
+                            <span className="w-2 h-2 rounded-full bg-white animate-pulse"></span>
+                            <span>{isUsingCustomCredentials() ? (language === 'en' ? 'Connected (Custom DB)' : 'যুক্ত (কাস্টম ডাটাবেস)') : (language === 'en' ? 'Connected (Live Server)' : 'সংযুক্ত (লাইভ সার্ভার)')}</span>
                           </div>
                         ) : (
                           <div className="flex items-center gap-2 px-3 py-1 bg-rose-50 text-rose-700 rounded-full border border-rose-200 text-xs font-bold animate-pulse">
                             <span className="w-2 h-2 rounded-full bg-rose-500"></span>
-                            <span>{language === 'en' ? 'Local Demo Mode' : 'লোকাল ডেমো মোড (অসংযুক্ত)'}</span>
+                            <span>{language === 'en' ? 'Disconnected' : 'বিচ্ছিন্ন'}</span>
                           </div>
                         )}
                       </div>
 
-                      {supabase ? (
-                        <div className="space-y-3 pt-2">
-                          <div className="bg-white border border-slate-100 rounded-2xl p-4 space-y-2">
-                            <div className="flex justify-between items-center text-xs gap-4">
-                              <span className="text-slate-400 font-medium shrink-0">Database URL:</span>
-                              <span className="font-mono text-slate-600 bg-slate-50 px-2.5 py-1 rounded-md max-w-[250px] sm:max-w-[400px] truncate block" title={supabaseUrl}>
-                                {supabaseUrl}
-                              </span>
-                            </div>
-                            <div className="flex justify-between items-center text-xs pt-1 border-t border-slate-50">
-                              <span className="text-slate-400 font-medium">Connection Type:</span>
-                              <span className="text-slate-600 font-bold">Supabase JS Client</span>
-                            </div>
-                          </div>
-                          <div className="text-xs text-emerald-600 bg-emerald-50/50 p-3 rounded-2xl border border-dashed border-emerald-100 font-medium leading-relaxed">
-                            {language === 'en' 
-                              ? '🎉 Great! Your app is connected to your Supabase database. When you add, edit, or delete products, they will hit your Supabase "products" table directly.' 
-                              : '🎉 চমৎকার! আপনার অ্যাপটি সুপাবেস ডাটাবেসের সাথে যুক্ত আছে। এখন থেকে যেকোনো প্রোডাক্ট যোগ, এডিট বা ডিলিট করলে তা সরাসরি আপনার সুপাবেস "products" টেবিলে চলে যাবে।'}
-                          </div>
+                      {/* Current Connection Info */}
+                      <div className="bg-white border border-slate-200/80 rounded-2xl p-4 space-y-2">
+                        <div className="flex justify-between items-center text-xs gap-4">
+                          <span className="text-slate-400 font-medium shrink-0">Active URL:</span>
+                          <span className="font-mono text-slate-700 bg-slate-50 border border-slate-100 px-3 py-1 rounded-lg max-w-[240px] sm:max-w-[420px] truncate block font-bold" title={supabaseUrl || ''}>
+                            {supabaseUrl || (language === 'en' ? 'Not configured' : 'কনফিগার করা হয়নি')}
+                          </span>
                         </div>
-                      ) : (
-                        <div className="space-y-4 pt-2">
-                          <div className="bg-rose-50/30 border border-rose-100/50 rounded-2xl p-4 sm:p-5 text-xs text-rose-950 space-y-3 leading-relaxed">
-                            <p className="font-bold text-rose-900">
-                              {language === 'en'
-                                ? 'Why is my app in Demo Mode?'
-                                : 'কেন আমার অ্যাপটি এখনো লোকাল ডেমো মোডে আছে?'}
-                            </p>
-                            <p className="text-slate-600">
-                              {language === 'en'
-                                ? 'The frontend needs Supabase API credentials to communicate with your cloud database. Currently, these environment variables are not set or are invalid.'
-                                : 'আপনার ক্লাউড ডাটাবেসের সাথে যোগাযোগের জন্য ফ্রন্টএন্ডে সুপাবেস API ক্রেডেনশিয়াল প্রয়োজন। বর্তমানে এই এনভায়রনমেন্ট ভেরিয়েবলগুলো সেট করা নেই বা সঠিক নয়।'}
-                            </p>
-                          </div>
+                        <div className="flex justify-between items-center text-xs pt-2 border-t border-slate-100">
+                          <span className="text-slate-400 font-medium">Connection Mode:</span>
+                          <span className={`font-bold ${isUsingCustomCredentials() ? 'text-amber-600' : 'text-indigo-600'}`}>
+                            {isUsingCustomCredentials() ? 'Custom Client Storage' : 'Environment / Fallback Live DB'}
+                          </span>
+                        </div>
+                      </div>
 
-                          <div className="bg-slate-900 text-slate-100 rounded-2xl p-5 space-y-3 text-xs leading-relaxed">
-                            <p className="font-bold text-amber-400">
-                              {language === 'en' ? 'How to connect your Supabase:' : 'সুপাবেস ডাটাবেস যেভাবে কানেক্ট করবেন:'}
-                            </p>
-                            <ol className="list-decimal list-inside space-y-2 text-slate-300">
-                              <li>
-                                {language === 'en'
-                                  ? 'Go to Supabase Dashboard (supabase.com) and copy your Project URL & Anon Key.'
-                                  : 'সুপাবেস ড্যাশবোর্ডে (supabase.com) গিয়ে আপনার প্রজেক্টের URL এবং Anon Key কপি করুন।'}
-                              </li>
-                              <li>
-                                {language === 'en'
-                                  ? 'In this Google AI Studio Build UI, open the "Settings" panel (on top-right or sidebar menu).'
-                                  : 'এই গুগল এআই স্টুডিও বিল্ড (Google AI Studio Build) ইন্টারফেসের ওপরের ডানদিকের "Settings" মেনু খুলুন।'}
-                              </li>
-                              <li>
-                                {language === 'en'
-                                  ? 'Under the Environment Variables section, add these two variables:'
-                                  : 'সেখানে Environment Variables সেকশনে এই দুটি ভেরিয়েবল সেট করুন:'}
-                                <div className="bg-slate-950 p-3 rounded-xl mt-2 font-mono text-[10px] text-amber-200 border border-slate-800 space-y-1">
-                                  <div>VITE_SUPABASE_URL = <span className="text-slate-400">YOUR_PROJECT_URL</span></div>
-                                  <div>VITE_SUPABASE_ANON_KEY = <span className="text-slate-400">YOUR_ANON_KEY</span></div>
-                                </div>
-                              </li>
-                              <li>
-                                {language === 'en'
-                                  ? 'Click "Save Settings" and the platform will inject them. Refresh the page, and your products will fetch directly from Supabase!'
-                                  : 'ভেরিয়েবলগুলো যুক্ত করে সেভ করার পর পেজটি একবার রিফ্রেশ দিন। এখন সরাসরি আপনার সুপাবেস ডাটাবেস থেকে সব ডাটা লোড ও সেভ হবে!'}
-                              </li>
-                            </ol>
+                      {/* Interactive Custom Input Fields */}
+                      <div className="space-y-4 pt-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                            {language === 'en' ? 'Connect Custom Project (Optional)' : 'কাস্টম সুপাবেস প্রজেক্ট যুক্ত করুন (ঐচ্ছিক)'}
+                          </span>
+                          {isUsingCustomCredentials() && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (window.confirm(language === 'en' ? 'Reset to default demo server?' : 'ডিফল্ট লাইভ সার্ভারে ফিরে যাবেন?')) {
+                                  clearCustomSupabaseCredentials();
+                                }
+                              }}
+                              className="text-xs text-rose-600 font-bold hover:underline flex items-center gap-1"
+                            >
+                              <RotateCcw className="w-3 h-3" />
+                              {language === 'en' ? 'Reset to Default' : 'ডিফল্ট সার্ভারে ফিরুন'}
+                            </button>
+                          )}
+                        </div>
+
+                        <div className="grid grid-cols-1 gap-3">
+                          <div>
+                            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1 block">
+                              Supabase Project URL (e.g., https://xxx.supabase.co)
+                            </label>
+                            <input
+                              type="text"
+                              value={customSupabaseUrlInput}
+                              onChange={(e) => setCustomSupabaseUrlInput(e.target.value)}
+                              placeholder="https://your-project.supabase.co"
+                              className="w-full px-3 py-2 text-xs font-mono bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-amber-500 outline-none text-slate-800"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1 block">
+                              Supabase Anon Public Key (eyJhbGciOi...)
+                            </label>
+                            <input
+                              type="password"
+                              value={customSupabaseKeyInput}
+                              onChange={(e) => setCustomSupabaseKeyInput(e.target.value)}
+                              placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                              className="w-full px-3 py-2 text-xs font-mono bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-amber-500 outline-none text-slate-800"
+                            />
                           </div>
                         </div>
-                      )}
+
+                        <div className="flex flex-wrap gap-2 pt-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (!customSupabaseUrlInput || !customSupabaseKeyInput) {
+                                alert(language === 'en' ? 'Please enter both URL and Anon Key!' : 'অনুগ্রহ করে URL এবং Anon Key উভয়ই প্রদান করুন!');
+                                return;
+                              }
+                              saveCustomSupabaseCredentials(customSupabaseUrlInput, customSupabaseKeyInput);
+                            }}
+                            className="px-4 py-2 bg-slate-900 hover:bg-amber-600 text-white font-bold text-xs rounded-xl transition-colors shadow-sm flex items-center gap-2 active:scale-95"
+                          >
+                            <Check className="w-4 h-4" />
+                            {language === 'en' ? 'Connect & Reload' : 'কানেক্ট ও সেভ করুন'}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => setShowSqlModal(true)}
+                            className="px-4 py-2 bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 font-bold text-xs rounded-xl transition-colors flex items-center gap-2 active:scale-95"
+                          >
+                            <ClipboardList className="w-4 h-4" />
+                            {language === 'en' ? 'Copy SQL Schema' : 'ডাটাবেস তৈরির SQL কপি করুন'}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={seedDatabase}
+                            disabled={seeding || loading}
+                            className="px-4 py-2 bg-emerald-50 border border-emerald-200 text-emerald-700 hover:bg-emerald-100 font-bold text-xs rounded-xl transition-colors flex items-center gap-2 active:scale-95 disabled:opacity-50"
+                          >
+                            <RefreshCw className={`w-3.5 h-3.5 ${seeding ? "animate-spin" : ""}`} />
+                            {seeding ? (language === 'en' ? "Syncing..." : "সিঙ্ক হচ্ছে...") : (language === 'en' ? "Seed Demo Products" : "ডেমো খাবার সিঙ্ক করুন")}
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="text-[11px] text-slate-600 bg-amber-50/60 p-3.5 rounded-2xl border border-amber-100 font-medium leading-relaxed">
+                        {language === 'en' 
+                          ? '💡 Tip: If you connect a new empty Supabase project, click "Copy SQL Schema" and run it in your Supabase SQL Editor to create all tables (products, orders, users, settings). Then click "Seed Demo Products" to load starter items!'
+                          : '💡 টিপস: আপনি যদি নতুন কোনো খালি সুপাবেস প্রজেক্ট যুক্ত করেন, তবে "ডাটাবেস তৈরির SQL কপি করুন" বাটনে ক্লিক করে কোডটি আপনার Supabase SQL Editor এ রান করুন। এরপর "ডেমো খাবার সিঙ্ক করুন" এ ক্লিক করলেই সব খাবার ডাটাবেসে চলে যাবে!'}
+                      </div>
                     </div>
 
                     <div className="space-y-4">
@@ -7002,6 +7020,67 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
           </div>
         </div>
       </div>
+
+      {/* SQL Copy Modal */}
+      {showSqlModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl w-full max-w-4xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-indigo-100 text-indigo-600 rounded-xl">
+                  <Database className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-lg text-slate-900">
+                    {language === 'en' ? 'Supabase Database Schema SQL' : 'সুপাবেস ডাটাবেস সেটআপ SQL কোড'}
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    {language === 'en' ? 'Copy and run this in your Supabase SQL Editor to create all tables.' : 'আপনার Supabase SQL Editor এ এই কোডটি পেস্ট করে রান করুন।'}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowSqlModal(false)}
+                className="p-2 hover:bg-slate-100 rounded-full text-slate-400 hover:text-slate-600 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 overflow-y-auto flex-1 font-mono text-xs bg-slate-950 text-emerald-400 select-all leading-relaxed custom-scrollbar-thin">
+              <pre className="whitespace-pre-wrap">{SUPABASE_SETUP_SQL}</pre>
+            </div>
+
+            <div className="p-4 border-t border-slate-100 bg-slate-50 flex items-center justify-between gap-4 flex-wrap">
+              <span className="text-xs text-slate-500">
+                {language === 'en' ? 'Creates products, orders, settings, users, and storage bucket.' : 'এই কোডটি products, orders, settings, users টেবিল এবং স্টোরেজ তৈরি করবে।'}
+              </span>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowSqlModal(false)}
+                  className="px-4 py-2 bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 font-bold text-xs rounded-xl transition-colors"
+                >
+                  {language === 'en' ? 'Close' : 'বন্ধ করুন'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(SUPABASE_SETUP_SQL);
+                    setCopiedSql(true);
+                    setTimeout(() => setCopiedSql(false), 3000);
+                  }}
+                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl transition-colors flex items-center gap-2 shadow-md active:scale-95"
+                >
+                  <ClipboardList className="w-4 h-4" />
+                  {copiedSql ? (language === 'en' ? 'Copied to Clipboard!' : 'কপি করা হয়েছে!') : (language === 'en' ? 'Copy SQL Script' : 'সম্পূর্ণ SQL কপি করুন')}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
