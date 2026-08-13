@@ -952,30 +952,66 @@ export default function App() {
   // Products Subscription
   useEffect(() => {
     const fetchProducts = async () => {
+      let deletedIds = new Set<string>();
+      try {
+        const deletedIdsStr = localStorage.getItem("yummydash_deleted_products");
+        if (deletedIdsStr) {
+          const parsed = JSON.parse(deletedIdsStr);
+          if (Array.isArray(parsed)) deletedIds = new Set(parsed);
+        }
+      } catch (e) {}
+
       const localProductsStr = localStorage.getItem('yummydash_custom_products');
-      let baseProducts = [...STATIC_PRODUCTS];
+      let localProducts: Product[] = [];
       if (localProductsStr) {
         try {
-          const localProducts = JSON.parse(localProductsStr) as Product[];
-          if (Array.isArray(localProducts)) {
-            const staticIds = new Set(STATIC_PRODUCTS.map(p => p.id));
-            
-            // Map static products, overriding any with local versions if they exist
-            const merged = STATIC_PRODUCTS.map(sp => {
-              const lp = localProducts.find(p => p.id === sp.id);
-              return lp ? { ...sp, ...lp } : sp;
-            });
-            
-            // Append local products that are not present in static products
-            const extraLocalProducts = localProducts.filter(lp => lp && lp.id && !staticIds.has(lp.id));
-            baseProducts = [...merged, ...extraLocalProducts];
-          }
+          const parsed = JSON.parse(localProductsStr);
+          if (Array.isArray(parsed)) localProducts = parsed;
         } catch (e) {
           console.error('Error parsing local products in App:', e);
         }
       }
 
-      // Merge local product-specific delivery charges
+      const localIdMap = new Map(localProducts.map(p => [p.id, p]));
+      const localNameMap = new Map<string, Product>();
+      localProducts.forEach(p => {
+        if (p.name) localNameMap.set(p.name.trim().toLowerCase(), p);
+      });
+
+      const mergeWithLocal = (p: Product): Product => {
+        const lp = localIdMap.get(p.id) || (p.name ? localNameMap.get(p.name.trim().toLowerCase()) : undefined);
+        if (lp) {
+          return {
+            ...p,
+            ...lp,
+            image: lp.image || p.image,
+            name: lp.name || p.name,
+            nameBn: lp.nameBn || p.nameBn,
+            price: lp.price !== undefined ? lp.price : p.price,
+            description: lp.description || p.description,
+            descriptionBn: lp.descriptionBn || p.descriptionBn,
+            category: lp.category || p.category,
+            categoryBn: lp.categoryBn || p.categoryBn,
+            weight: lp.weight || p.weight,
+            weightBn: lp.weightBn || p.weightBn,
+            discount: lp.discount !== undefined ? lp.discount : p.discount,
+            isNew: lp.isNew !== undefined ? lp.isNew : p.isNew,
+            isOffer: lp.isOffer !== undefined ? lp.isOffer : p.isOffer,
+            stock: lp.stock !== undefined ? lp.stock : p.stock,
+          };
+        }
+        return p;
+      };
+
+      let baseProducts = STATIC_PRODUCTS.map(mergeWithLocal);
+      const staticIds = new Set(STATIC_PRODUCTS.map(p => p.id));
+      const staticNames = new Set(STATIC_PRODUCTS.map(p => p.name?.trim().toLowerCase()));
+
+      const extraLocalProducts = localProducts.filter(lp => 
+        lp && lp.id && !staticIds.has(lp.id) && !staticNames.has(lp.name?.trim().toLowerCase())
+      );
+      baseProducts = [...baseProducts, ...extraLocalProducts];
+
       const applyCustomCharges = (prods: Product[]) => {
         try {
           const localChargesStr = localStorage.getItem('yummydash_product_delivery_charges');
@@ -996,6 +1032,7 @@ export default function App() {
         const seen = new Set<string>();
         return prods.filter(p => {
           if (!p || !p.id) return false;
+          if (deletedIds.has(p.id)) return false;
           if (seen.has(p.id)) return false;
           seen.add(p.id);
           return true;
@@ -1006,22 +1043,33 @@ export default function App() {
         setProducts(sanitizeUniqueProducts(applyCustomCharges(baseProducts)));
         return;
       }
-      const { data, error } = await supabase
-        .from('products')
-        .select('*')
-        .order('updated_at', { ascending: false });
 
-      if (error) {
-        console.warn("Supabase products warning:", error);
+      try {
+        const { data, error } = await supabase
+          .from('products')
+          .select('*')
+          .order('updated_at', { ascending: false });
+
+        if (error || !data) {
+          setProducts(sanitizeUniqueProducts(applyCustomCharges(baseProducts)));
+        } else {
+          const dbProds = (data || []) as Product[];
+          const mergedDbProds = dbProds.map(mergeWithLocal);
+
+          const dbIds = new Set(mergedDbProds.map(p => p.id));
+          const dbNames = new Set(mergedDbProds.map(p => p.name?.trim().toLowerCase()));
+
+          const extraLocal = baseProducts.filter(p => 
+            p && p.id && !dbIds.has(p.id) && !dbNames.has(p.name?.trim().toLowerCase())
+          );
+
+          const combined = [...mergedDbProds, ...extraLocal];
+          const finalProds = sanitizeUniqueProducts(applyCustomCharges(combined.length > 0 ? combined : baseProducts));
+          setProducts(finalProds);
+        }
+      } catch (err) {
+        console.warn("Supabase fetch exception in App:", err);
         setProducts(sanitizeUniqueProducts(applyCustomCharges(baseProducts)));
-      } else {
-        const dbProds = (data || []) as Product[];
-        const dbIds = new Set(dbProds.map(p => p.id));
-        const extraLocal = baseProducts.filter(p => p && p.id && !dbIds.has(p.id));
-        const combined = (dbProds.length === 0 && localProductsStr === null) 
-          ? baseProducts 
-          : [...dbProds, ...extraLocal];
-        setProducts(sanitizeUniqueProducts(applyCustomCharges(combined)));
       }
     };
 

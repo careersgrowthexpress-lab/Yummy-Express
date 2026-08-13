@@ -780,32 +780,65 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
   };
 
   const fetchProducts = async () => {
+    let deletedIds = new Set<string>();
+    try {
+      const deletedIdsStr = localStorage.getItem("yummydash_deleted_products");
+      if (deletedIdsStr) {
+        const parsed = JSON.parse(deletedIdsStr);
+        if (Array.isArray(parsed)) deletedIds = new Set(parsed);
+      }
+    } catch (e) {}
+
     const localProductsStr = localStorage.getItem("yummydash_custom_products");
-    let localProducts = [...PRODUCTS];
+    let localProducts: Product[] = [];
     if (localProductsStr) {
       try {
-        const parsedLocal = JSON.parse(localProductsStr) as Product[];
-        if (Array.isArray(parsedLocal)) {
-          const staticIds = new Set(PRODUCTS.map(p => p.id));
-          
-          // Map static products, overriding any with local versions if they exist
-          const merged = PRODUCTS.map(sp => {
-            const lp = parsedLocal.find(p => p.id === sp.id);
-            return lp ? { ...sp, ...lp } : sp;
-          });
-          
-          // Append local products that are not present in static products
-          const extraLocal = parsedLocal.filter(lp => lp && lp.id && !staticIds.has(lp.id));
-          localProducts = [...merged, ...extraLocal];
-        }
+        const parsed = JSON.parse(localProductsStr);
+        if (Array.isArray(parsed)) localProducts = parsed;
       } catch (err) {
         console.error("Error parsing local products: ", err);
       }
     }
 
-    if (localProducts && localProducts.length > 0) {
-      backupProductsLocally(localProducts);
-    }
+    const localIdMap = new Map(localProducts.map(p => [p.id, p]));
+    const localNameMap = new Map<string, Product>();
+    localProducts.forEach(p => {
+      if (p.name) localNameMap.set(p.name.trim().toLowerCase(), p);
+    });
+
+    const mergeWithLocal = (p: Product): Product => {
+      const lp = localIdMap.get(p.id) || (p.name ? localNameMap.get(p.name.trim().toLowerCase()) : undefined);
+      if (lp) {
+        return {
+          ...p,
+          ...lp,
+          image: lp.image || p.image,
+          name: lp.name || p.name,
+          nameBn: lp.nameBn || p.nameBn,
+          price: lp.price !== undefined ? lp.price : p.price,
+          description: lp.description || p.description,
+          descriptionBn: lp.descriptionBn || p.descriptionBn,
+          category: lp.category || p.category,
+          categoryBn: lp.categoryBn || p.categoryBn,
+          weight: lp.weight || p.weight,
+          weightBn: lp.weightBn || p.weightBn,
+          discount: lp.discount !== undefined ? lp.discount : p.discount,
+          isNew: lp.isNew !== undefined ? lp.isNew : p.isNew,
+          isOffer: lp.isOffer !== undefined ? lp.isOffer : p.isOffer,
+          stock: lp.stock !== undefined ? lp.stock : p.stock,
+        };
+      }
+      return p;
+    };
+
+    let baseProducts = PRODUCTS.map(mergeWithLocal);
+    const staticIds = new Set(PRODUCTS.map(p => p.id));
+    const staticNames = new Set(PRODUCTS.map(p => p.name?.trim().toLowerCase()));
+
+    const extraLocalProducts = localProducts.filter(lp => 
+      lp && lp.id && !staticIds.has(lp.id) && !staticNames.has(lp.name?.trim().toLowerCase())
+    );
+    baseProducts = [...baseProducts, ...extraLocalProducts];
 
     const applyCustomCharges = (prods: Product[]) => {
       try {
@@ -823,34 +856,58 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
       return prods;
     };
 
+    const sanitizeUniqueProducts = (prods: Product[]) => {
+      const seen = new Set<string>();
+      return prods.filter(p => {
+        if (!p || !p.id) return false;
+        if (deletedIds.has(p.id)) return false;
+        if (seen.has(p.id)) return false;
+        seen.add(p.id);
+        return true;
+      });
+    };
+
     if (!supabase) {
-      setProducts(applyCustomCharges(localProducts));
+      const finalProds = sanitizeUniqueProducts(applyCustomCharges(baseProducts));
+      setProducts(finalProds);
+      if (finalProds && finalProds.length > 0) {
+        backupProductsLocally(finalProds);
+      }
       setLoading(false);
       return;
     }
+
     setLoading(true);
     try {
       const { data, error } = await supabase
         .from("products")
         .select("*")
         .order("updated_at", { ascending: false });
-      if (error) {
-        console.warn("Supabase products fetch warning:", error);
-        setProducts(applyCustomCharges(localProducts));
+
+      if (error || !data) {
+        const finalProds = sanitizeUniqueProducts(applyCustomCharges(baseProducts));
+        setProducts(finalProds);
       } else {
         const dbProds = (data || []) as Product[];
-        const dbIds = new Set(dbProds.map(p => p.id));
-        const extraLocal = localProducts.filter(lp => lp && lp.id && !dbIds.has(lp.id));
-        const combined = [...dbProds, ...extraLocal];
-        const mergedProds = applyCustomCharges(combined.length > 0 ? combined : localProducts);
-        setProducts(mergedProds);
-        if (mergedProds && mergedProds.length > 0) {
-          backupProductsLocally(mergedProds);
+        const mergedDbProds = dbProds.map(mergeWithLocal);
+
+        const dbIds = new Set(mergedDbProds.map(p => p.id));
+        const dbNames = new Set(mergedDbProds.map(p => p.name?.trim().toLowerCase()));
+
+        const extraLocal = baseProducts.filter(lp => 
+          lp && lp.id && !dbIds.has(lp.id) && !dbNames.has(lp.name?.trim().toLowerCase())
+        );
+
+        const combined = [...mergedDbProds, ...extraLocal];
+        const finalProds = sanitizeUniqueProducts(applyCustomCharges(combined.length > 0 ? combined : baseProducts));
+        setProducts(finalProds);
+        if (finalProds && finalProds.length > 0) {
+          backupProductsLocally(finalProds);
         }
       }
     } catch (error) {
       console.warn("Supabase products warning:", error);
-      setProducts(applyCustomCharges(localProducts));
+      setProducts(sanitizeUniqueProducts(applyCustomCharges(baseProducts)));
     } finally {
       setLoading(false);
     }
@@ -2777,6 +2834,18 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
         return uuidRegex.test(str);
       };
 
+      // Track deleted product ID in local storage
+      try {
+        const deletedIdsStr = localStorage.getItem("yummydash_deleted_products");
+        const deletedIds: string[] = deletedIdsStr ? JSON.parse(deletedIdsStr) : [];
+        if (!deletedIds.includes(id)) {
+          deletedIds.push(id);
+          localStorage.setItem("yummydash_deleted_products", JSON.stringify(deletedIds));
+        }
+      } catch (e) {
+        console.error("Error saving deleted product ID:", e);
+      }
+
       // Always remove from local custom products array to keep it completely in sync
       const localProductsStr = localStorage.getItem("yummydash_custom_products");
       let localProducts = [...PRODUCTS];
@@ -2787,16 +2856,13 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
           console.error("Error parsing local products in delete:", err);
         }
       }
-      const originalLength = localProducts.length;
       localProducts = localProducts.filter((p) => p.id !== id);
 
-      if (localProducts.length !== originalLength || !localProductsStr) {
-        localStorage.setItem(
-          "yummydash_custom_products",
-          JSON.stringify(localProducts),
-        );
-        window.dispatchEvent(new Event("yummydash_products_change"));
-      }
+      localStorage.setItem(
+        "yummydash_custom_products",
+        JSON.stringify(localProducts),
+      );
+      window.dispatchEvent(new Event("yummydash_products_change"));
 
       // If Supabase is active and ID is a valid UUID, delete from remote database
       if (supabase && isUUID(id)) {
