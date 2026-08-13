@@ -800,14 +800,25 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
       }
     }
 
-    const localIdMap = new Map(localProducts.map(p => [p.id, p]));
+    const localIdMap = new Map<string, Product>();
     const localNameMap = new Map<string, Product>();
+    const localNameBnMap = new Map<string, Product>();
+
     localProducts.forEach(p => {
+      if (p.id) localIdMap.set(p.id, p);
       if (p.name) localNameMap.set(p.name.trim().toLowerCase(), p);
+      if (p.nameBn) localNameBnMap.set(p.nameBn.trim().toLowerCase(), p);
     });
 
+    const findLocalMatch = (p: Product): Product | undefined => {
+      if (p.id && localIdMap.has(p.id)) return localIdMap.get(p.id);
+      if (p.name && localNameMap.has(p.name.trim().toLowerCase())) return localNameMap.get(p.name.trim().toLowerCase());
+      if (p.nameBn && localNameBnMap.has(p.nameBn.trim().toLowerCase())) return localNameBnMap.get(p.nameBn.trim().toLowerCase());
+      return undefined;
+    };
+
     const mergeWithLocal = (p: Product): Product => {
-      const lp = localIdMap.get(p.id) || (p.name ? localNameMap.get(p.name.trim().toLowerCase()) : undefined);
+      const lp = findLocalMatch(p);
       if (lp) {
         return {
           ...p,
@@ -816,13 +827,13 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
           name: lp.name || p.name,
           nameBn: lp.nameBn || p.nameBn,
           price: lp.price !== undefined ? lp.price : p.price,
+          discount: lp.discount !== undefined ? lp.discount : p.discount,
           description: lp.description || p.description,
           descriptionBn: lp.descriptionBn || p.descriptionBn,
           category: lp.category || p.category,
           categoryBn: lp.categoryBn || p.categoryBn,
           weight: lp.weight || p.weight,
           weightBn: lp.weightBn || p.weightBn,
-          discount: lp.discount !== undefined ? lp.discount : p.discount,
           isNew: lp.isNew !== undefined ? lp.isNew : p.isNew,
           isOffer: lp.isOffer !== undefined ? lp.isOffer : p.isOffer,
           stock: lp.stock !== undefined ? lp.stock : p.stock,
@@ -834,10 +845,15 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
     let baseProducts = PRODUCTS.map(mergeWithLocal);
     const staticIds = new Set(PRODUCTS.map(p => p.id));
     const staticNames = new Set(PRODUCTS.map(p => p.name?.trim().toLowerCase()));
+    const staticNamesBn = new Set(PRODUCTS.map(p => p.nameBn?.trim().toLowerCase()));
 
-    const extraLocalProducts = localProducts.filter(lp => 
-      lp && lp.id && !staticIds.has(lp.id) && !staticNames.has(lp.name?.trim().toLowerCase())
-    );
+    const extraLocalProducts = localProducts.filter(lp => {
+      if (!lp || !lp.id) return false;
+      if (staticIds.has(lp.id)) return false;
+      if (lp.name && staticNames.has(lp.name.trim().toLowerCase())) return false;
+      if (lp.nameBn && staticNamesBn.has(lp.nameBn.trim().toLowerCase())) return false;
+      return true;
+    });
     baseProducts = [...baseProducts, ...extraLocalProducts];
 
     const applyCustomCharges = (prods: Product[]) => {
@@ -893,10 +909,15 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
 
         const dbIds = new Set(mergedDbProds.map(p => p.id));
         const dbNames = new Set(mergedDbProds.map(p => p.name?.trim().toLowerCase()));
+        const dbNamesBn = new Set(mergedDbProds.map(p => p.nameBn?.trim().toLowerCase()));
 
-        const extraLocal = baseProducts.filter(lp => 
-          lp && lp.id && !dbIds.has(lp.id) && !dbNames.has(lp.name?.trim().toLowerCase())
-        );
+        const extraLocal = baseProducts.filter(lp => {
+          if (!lp || !lp.id) return false;
+          if (dbIds.has(lp.id)) return false;
+          if (lp.name && dbNames.has(lp.name.trim().toLowerCase())) return false;
+          if (lp.nameBn && dbNamesBn.has(lp.nameBn.trim().toLowerCase())) return false;
+          return true;
+        });
 
         const combined = [...mergedDbProds, ...extraLocal];
         const finalProds = sanitizeUniqueProducts(applyCustomCharges(combined.length > 0 ? combined : baseProducts));
@@ -1947,16 +1968,25 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
     fetchCustomers();
     fetchVisitorLogs();
 
-    // Listen to real-time visit logs
+    // Listen to real-time visit logs and product changes
     const handleNewVisitLogged = () => {
       fetchVisitorLogs();
     };
+    const handleProductsChange = () => {
+      fetchProducts();
+    };
+
     window.addEventListener("yummydash_new_visit_logged", handleNewVisitLogged);
+    window.addEventListener("yummydash_products_change", handleProductsChange);
+    window.addEventListener("storage", handleProductsChange);
+
     return () => {
       window.removeEventListener(
         "yummydash_new_visit_logged",
         handleNewVisitLogged,
       );
+      window.removeEventListener("yummydash_products_change", handleProductsChange);
+      window.removeEventListener("storage", handleProductsChange);
     };
   }, []);
 
@@ -2709,18 +2739,38 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
       if (supabase) {
         try {
           if (editingId) {
-            let { error } = await supabase
+            let res = await supabase
               .from("products")
               .update(dataToSave)
-              .eq("id", editingId);
+              .eq("id", editingId)
+              .select();
 
-            if (error) {
-              console.warn("Database update retry without optional columns:", error);
-              const { originalPrice, ...staleData } = dataToSave;
-              await supabase
-                .from("products")
-                .update(staleData)
-                .eq("id", editingId);
+            let { error, data } = res;
+
+            if (error || !data || data.length === 0) {
+              // If updating by ID matched 0 rows (e.g. editingId was a local string vs UUID), try updating by Name or Bengali Name!
+              const nameFilter = cleanData.name ? `name.ilike.${cleanData.name}` : '';
+              const nameBnFilter = cleanData.nameBn ? `nameBn.ilike.${cleanData.nameBn}` : '';
+              const orCond = [nameFilter, nameBnFilter].filter(Boolean).join(',');
+
+              if (orCond) {
+                const nameRes = await supabase
+                  .from("products")
+                  .update(dataToSave)
+                  .or(orCond)
+                  .select();
+
+                if (!nameRes.data || nameRes.data.length === 0) {
+                  // If still not matched, perform upsert so row exists in Supabase
+                  await supabase
+                    .from("products")
+                    .upsert([{ id: editingId, ...dataToSave }]);
+                }
+              } else {
+                await supabase
+                  .from("products")
+                  .upsert([{ id: editingId, ...dataToSave }]);
+              }
             }
           } else {
             let res = await supabase.from("products").insert([dataToSave]).select();

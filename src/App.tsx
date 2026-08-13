@@ -972,14 +972,26 @@ export default function App() {
         }
       }
 
-      const localIdMap = new Map(localProducts.map(p => [p.id, p]));
+      // Build quick lookup maps for local edits
+      const localIdMap = new Map<string, Product>();
       const localNameMap = new Map<string, Product>();
+      const localNameBnMap = new Map<string, Product>();
+
       localProducts.forEach(p => {
+        if (p.id) localIdMap.set(p.id, p);
         if (p.name) localNameMap.set(p.name.trim().toLowerCase(), p);
+        if (p.nameBn) localNameBnMap.set(p.nameBn.trim().toLowerCase(), p);
       });
 
+      const findLocalMatch = (p: Product): Product | undefined => {
+        if (p.id && localIdMap.has(p.id)) return localIdMap.get(p.id);
+        if (p.name && localNameMap.has(p.name.trim().toLowerCase())) return localNameMap.get(p.name.trim().toLowerCase());
+        if (p.nameBn && localNameBnMap.has(p.nameBn.trim().toLowerCase())) return localNameBnMap.get(p.nameBn.trim().toLowerCase());
+        return undefined;
+      };
+
       const mergeWithLocal = (p: Product): Product => {
-        const lp = localIdMap.get(p.id) || (p.name ? localNameMap.get(p.name.trim().toLowerCase()) : undefined);
+        const lp = findLocalMatch(p);
         if (lp) {
           return {
             ...p,
@@ -988,13 +1000,13 @@ export default function App() {
             name: lp.name || p.name,
             nameBn: lp.nameBn || p.nameBn,
             price: lp.price !== undefined ? lp.price : p.price,
+            discount: lp.discount !== undefined ? lp.discount : p.discount,
             description: lp.description || p.description,
             descriptionBn: lp.descriptionBn || p.descriptionBn,
             category: lp.category || p.category,
             categoryBn: lp.categoryBn || p.categoryBn,
             weight: lp.weight || p.weight,
             weightBn: lp.weightBn || p.weightBn,
-            discount: lp.discount !== undefined ? lp.discount : p.discount,
             isNew: lp.isNew !== undefined ? lp.isNew : p.isNew,
             isOffer: lp.isOffer !== undefined ? lp.isOffer : p.isOffer,
             stock: lp.stock !== undefined ? lp.stock : p.stock,
@@ -1006,10 +1018,15 @@ export default function App() {
       let baseProducts = STATIC_PRODUCTS.map(mergeWithLocal);
       const staticIds = new Set(STATIC_PRODUCTS.map(p => p.id));
       const staticNames = new Set(STATIC_PRODUCTS.map(p => p.name?.trim().toLowerCase()));
+      const staticNamesBn = new Set(STATIC_PRODUCTS.map(p => p.nameBn?.trim().toLowerCase()));
 
-      const extraLocalProducts = localProducts.filter(lp => 
-        lp && lp.id && !staticIds.has(lp.id) && !staticNames.has(lp.name?.trim().toLowerCase())
-      );
+      const extraLocalProducts = localProducts.filter(lp => {
+        if (!lp || !lp.id) return false;
+        if (staticIds.has(lp.id)) return false;
+        if (lp.name && staticNames.has(lp.name.trim().toLowerCase())) return false;
+        if (lp.nameBn && staticNamesBn.has(lp.nameBn.trim().toLowerCase())) return false;
+        return true;
+      });
       baseProducts = [...baseProducts, ...extraLocalProducts];
 
       const applyCustomCharges = (prods: Product[]) => {
@@ -1058,10 +1075,15 @@ export default function App() {
 
           const dbIds = new Set(mergedDbProds.map(p => p.id));
           const dbNames = new Set(mergedDbProds.map(p => p.name?.trim().toLowerCase()));
+          const dbNamesBn = new Set(mergedDbProds.map(p => p.nameBn?.trim().toLowerCase()));
 
-          const extraLocal = baseProducts.filter(p => 
-            p && p.id && !dbIds.has(p.id) && !dbNames.has(p.name?.trim().toLowerCase())
-          );
+          const extraLocal = baseProducts.filter(p => {
+            if (!p || !p.id) return false;
+            if (dbIds.has(p.id)) return false;
+            if (p.name && dbNames.has(p.name.trim().toLowerCase())) return false;
+            if (p.nameBn && dbNamesBn.has(p.nameBn.trim().toLowerCase())) return false;
+            return true;
+          });
 
           const combined = [...mergedDbProds, ...extraLocal];
           const finalProds = sanitizeUniqueProducts(applyCustomCharges(combined.length > 0 ? combined : baseProducts));
@@ -1078,11 +1100,14 @@ export default function App() {
     const handleLocalProductsChange = () => {
       fetchProducts();
     };
+
     window.addEventListener('yummydash_products_change', handleLocalProductsChange);
+    window.addEventListener('storage', handleLocalProductsChange);
 
     if (!supabase) {
       return () => {
         window.removeEventListener('yummydash_products_change', handleLocalProductsChange);
+        window.removeEventListener('storage', handleLocalProductsChange);
       };
     }
 
@@ -1095,6 +1120,7 @@ export default function App() {
 
     return () => {
       window.removeEventListener('yummydash_products_change', handleLocalProductsChange);
+      window.removeEventListener('storage', handleLocalProductsChange);
       supabase.removeChannel(channel);
     };
   }, []);
