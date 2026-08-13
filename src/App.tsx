@@ -39,6 +39,14 @@ import AdminPanel from './components/AdminPanel';
 import UserProfile from './components/UserProfile';
 import AuthModal from './components/AuthModal';
 
+function getWhatsAppLink(rawPhone: string, text: string) {
+  let cleaned = (rawPhone || '01410161323').replace(/\D/g, '');
+  if (cleaned.startsWith('01')) {
+    cleaned = '88' + cleaned;
+  }
+  return `https://wa.me/${cleaned}?text=${encodeURIComponent(text)}`;
+}
+
 // Helper to calculate Levenshtein distance for fuzzy search typo tolerance
 function getLevenshteinDistance(a: string, b: string): number {
   const matrix: number[][] = [];
@@ -214,6 +222,9 @@ export default function App() {
       deliveryChargeOutside: DELIVERY_CONFIG ? DELIVERY_CONFIG.chargeOutside : 120,
       deliveryFreeThreshold: DELIVERY_CONFIG ? DELIVERY_CONFIG.freeThreshold : 1000,
       deliveryChargeEnabled: DELIVERY_CONFIG ? DELIVERY_CONFIG.enabled : true,
+      whatsappNumber: '01410161323',
+      whatsappOrderingOnly: false,
+      whatsappOrderEnabled: true,
     }
   });
   const [checkoutForm, setCheckoutForm] = useState<CustomerDetails & { deliveryZone?: 'inside' | 'outside' }>({
@@ -564,6 +575,12 @@ export default function App() {
         companyInfo: {
           ...prev.companyInfo,
           ...companyInfo,
+          categories: (companyInfo.categories && Array.isArray(companyInfo.categories) && companyInfo.categories.length > 0)
+            ? companyInfo.categories
+            : prev.companyInfo.categories,
+          sliders: (companyInfo.sliders && Array.isArray(companyInfo.sliders) && companyInfo.sliders.length > 0)
+            ? companyInfo.sliders
+            : prev.companyInfo.sliders,
           deliveryChargeInside: companyInfo.deliveryChargeInside !== undefined && companyInfo.deliveryChargeInside !== null
             ? Number(companyInfo.deliveryChargeInside)
             : prev.companyInfo.deliveryChargeInside,
@@ -576,6 +593,13 @@ export default function App() {
           deliveryChargeEnabled: companyInfo.deliveryChargeEnabled !== undefined && companyInfo.deliveryChargeEnabled !== null
             ? !!companyInfo.deliveryChargeEnabled
             : prev.companyInfo.deliveryChargeEnabled,
+          whatsappNumber: companyInfo.whatsappNumber || prev.companyInfo.whatsappNumber || '01410161323',
+          whatsappOrderingOnly: companyInfo.whatsappOrderingOnly !== undefined && companyInfo.whatsappOrderingOnly !== null
+            ? !!companyInfo.whatsappOrderingOnly
+            : prev.companyInfo.whatsappOrderingOnly,
+          whatsappOrderEnabled: companyInfo.whatsappOrderEnabled !== undefined && companyInfo.whatsappOrderEnabled !== null
+            ? !!companyInfo.whatsappOrderEnabled
+            : prev.companyInfo.whatsappOrderEnabled,
         }
       };
     });
@@ -584,7 +608,7 @@ export default function App() {
   // Site Settings Subscription
   useEffect(() => {
     const fetchSettings = async () => {
-      const localSettingsStr = localStorage.getItem('yummydash_custom_settings');
+      const localSettingsStr = localStorage.getItem('yummydash_custom_settings') || localStorage.getItem('yummy_site_settings');
       if (localSettingsStr) {
         try {
           const localSettings = JSON.parse(localSettingsStr);
@@ -594,53 +618,61 @@ export default function App() {
         }
       }
       if (!supabase) return;
-      const { data, error } = await supabase
-        .from('settings')
-        .select('*')
-        .eq('id', 'global')
-        .single();
+      try {
+        const { data, error } = await supabase
+          .from('settings')
+          .select('*')
+          .eq('id', 'global')
+          .single();
 
-      if (error) {
-        console.warn("Settings warning:", error);
-      } else if (data) {
-        mergeSiteSettings(data as any);
+        if (error) {
+          console.warn("Settings warning:", error);
+        } else if (data) {
+          mergeSiteSettings(data as any);
+        }
+      } catch (e) {
+        console.warn("Settings fetch exception in App:", e);
       }
     };
 
     fetchSettings();
 
-    if (!supabase) {
-      const handleLocalSettingsChange = () => {
-        const localSettingsStr = localStorage.getItem('yummydash_custom_settings');
-        if (localSettingsStr) {
-          try {
-            const localSettings = JSON.parse(localSettingsStr);
-            if (localSettings) mergeSiteSettings(localSettings);
-          } catch (err) {
-            console.error('Error parsing local settings on event:', err);
-          }
+    const handleLocalSettingsChange = () => {
+      const localSettingsStr = localStorage.getItem('yummydash_custom_settings') || localStorage.getItem('yummy_site_settings');
+      if (localSettingsStr) {
+        try {
+          const localSettings = JSON.parse(localSettingsStr);
+          if (localSettings) mergeSiteSettings(localSettings);
+        } catch (err) {
+          console.error('Error parsing local settings on event:', err);
         }
-      };
-      window.addEventListener('yummydash_settings_change', handleLocalSettingsChange);
-      return () => {
-        window.removeEventListener('yummydash_settings_change', handleLocalSettingsChange);
-      };
+      }
+    };
+
+    window.addEventListener('yummydash_settings_change', handleLocalSettingsChange);
+    window.addEventListener('storage', handleLocalSettingsChange);
+
+    let channel: any = null;
+    if (supabase) {
+      channel = supabase
+        .channel('site_settings')
+        .on('postgres_changes', { 
+          event: 'UPDATE', 
+          schema: 'public', 
+          table: 'settings', 
+          filter: 'id=eq.global' 
+        }, (payload) => {
+          mergeSiteSettings(payload.new as any);
+        })
+        .subscribe();
     }
 
-    const channel = supabase
-      .channel('site_settings')
-      .on('postgres_changes', { 
-        event: 'UPDATE', 
-        schema: 'public', 
-        table: 'settings', 
-        filter: 'id=eq.global' 
-      }, (payload) => {
-        mergeSiteSettings(payload.new as any);
-      })
-      .subscribe();
-
     return () => {
-      supabase.removeChannel(channel);
+      window.removeEventListener('yummydash_settings_change', handleLocalSettingsChange);
+      window.removeEventListener('storage', handleLocalSettingsChange);
+      if (channel && supabase) {
+        supabase.removeChannel(channel);
+      }
     };
   }, []);
 
@@ -2066,6 +2098,9 @@ export default function App() {
                                 e.stopPropagation();
                                 toggleFavorite(p.id);
                               }}
+                              whatsappNumber={siteSettings.companyInfo?.whatsappNumber}
+                              whatsappOrderEnabled={siteSettings.companyInfo?.whatsappOrderEnabled}
+                              whatsappOrderingOnly={siteSettings.companyInfo?.whatsappOrderingOnly}
                             />
                           ))}
                         </div>
@@ -2112,6 +2147,9 @@ export default function App() {
                               e.stopPropagation();
                               toggleFavorite(p.id);
                             }}
+                            whatsappNumber={siteSettings.companyInfo?.whatsappNumber}
+                            whatsappOrderEnabled={siteSettings.companyInfo?.whatsappOrderEnabled}
+                            whatsappOrderingOnly={siteSettings.companyInfo?.whatsappOrderingOnly}
                           />
                         ))}
                       </div>
@@ -2715,16 +2753,33 @@ export default function App() {
 
                 {/* Footer Section: Fixed at the bottom */}
                 <div className="p-5 sm:p-8 md:p-10 pt-3 sm:pt-4 space-y-3 shrink-0 bg-white border-t border-slate-50">
-                  <button 
-                    onClick={() => {
-                      addToCart(selectedProduct);
-                      setSelectedProduct(null);
-                    }}
-                    className="w-full py-3.5 sm:py-4 bg-slate-900 text-white rounded-2xl font-bold hover:bg-amber-600 transition-all duration-300 flex items-center justify-center gap-3 text-sm sm:text-base md:text-lg active:scale-95 shadow-xl shadow-slate-900/10"
+                  <a
+                    href={getWhatsAppLink(
+                      siteSettings.companyInfo?.whatsappNumber || '01410161323',
+                      language === 'en'
+                        ? `Hello Yummy Express! I want to order:\n🍔 Product: ${selectedProduct.name}\n💰 Price: ৳${selectedProduct.price}${selectedProduct.weight ? `\n⚖️ Weight: ${selectedProduct.weight}` : ''}\nPlease confirm my order. Thank you!`
+                        : `হ্যালো Yummy Express! আমি এই খাবারটি অর্ডার করতে চাই:\n🍔 খাবার: ${selectedProduct.nameBn || selectedProduct.name}\n💰 মূল্য: ৳${selectedProduct.price}${selectedProduct.weight ? `\n⚖️ পরিমাপ: ${selectedProduct.weightBn || selectedProduct.weight}` : ''}\nআমার অর্ডারটি কনফার্ম করুন। ধন্যবাদ!`
+                    )}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full py-3.5 sm:py-4 bg-emerald-600 text-white rounded-2xl font-black hover:bg-emerald-700 transition-all duration-300 flex items-center justify-center gap-3 text-sm sm:text-base md:text-lg active:scale-95 shadow-xl shadow-emerald-600/20 cursor-pointer"
                   >
-                    {t.addCollection}
-                    <ShoppingBag className="w-4 h-4 sm:w-5 sm:h-5" />
-                  </button>
+                    <MessageSquare className="w-5 h-5 fill-current" />
+                    <span>{language === 'en' ? 'Order Directly on WhatsApp' : 'হোয়াটসঅ্যাপে সরাসরি অর্ডার করুন'}</span>
+                  </a>
+
+                  {!siteSettings.companyInfo?.whatsappOrderingOnly && (
+                    <button 
+                      onClick={() => {
+                        addToCart(selectedProduct);
+                        setSelectedProduct(null);
+                      }}
+                      className="w-full py-3 sm:py-3.5 bg-slate-900 text-white rounded-2xl font-bold hover:bg-amber-600 transition-all duration-300 flex items-center justify-center gap-3 text-sm active:scale-95 shadow-md cursor-pointer"
+                    >
+                      {t.addCollection}
+                      <ShoppingBag className="w-4 h-4 sm:w-5 sm:h-5" />
+                    </button>
+                  )}
                   <p className="text-center text-[10px] md:text-xs text-slate-400 uppercase tracking-widest">
                     {t.deliveryNote}
                   </p>
@@ -2824,13 +2879,31 @@ export default function App() {
                       <span>৳{(cartTotal + shippingCost).toLocaleString()}</span>
                     </div>
                   </div>
-                  <button 
-                    onClick={handleCheckout}
-                    className="w-full py-4 bg-amber-600 text-white text-sm font-bold rounded-xl shadow-lg shadow-amber-100/50 hover:bg-amber-700 transition-all active:scale-[0.98] flex items-center justify-center gap-2"
+
+                  <a 
+                    href={getWhatsAppLink(
+                      siteSettings.companyInfo?.whatsappNumber || '01410161323',
+                      language === 'en'
+                        ? `Hello Yummy Express! I want to order these items from my cart:\n\n${cart.map((i, idx) => `${idx + 1}. ${i.name} x${i.quantity} = ৳${i.price * i.quantity}`).join('\n')}\n\n💵 Subtotal: ৳${cartTotal}\n🚚 Shipping: ৳${shippingCost}\n💰 Total: ৳${cartTotal + shippingCost}\n\nPlease confirm my order. Thank you!`
+                        : `হ্যালো Yummy Express! আমি কার্ট থেকে এই খাবারগুলো অর্ডার করতে চাই:\n\n${cart.map((i, idx) => `${idx + 1}. ${i.nameBn || i.name} x${i.quantity} = ৳${i.price * i.quantity}`).join('\n')}\n\n💵 সাবটোটাল: ৳${cartTotal}\n🚚 ডেলিভারি চার্জ: ৳${shippingCost}\n💰 সর্বমোট: ৳${cartTotal + shippingCost}\n\nআমার অর্ডারটি কনফার্ম করুন। ধন্যবাদ!`
+                    )}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full py-4 bg-emerald-600 text-white text-sm font-black rounded-xl shadow-lg shadow-emerald-600/20 hover:bg-emerald-700 transition-all active:scale-[0.98] flex items-center justify-center gap-2 cursor-pointer"
                   >
-                    {t.placeOrder} — ৳{(cartTotal + shippingCost).toLocaleString()}
-                    <ArrowRight className="w-4 h-4" />
-                  </button>
+                    <MessageSquare className="w-4 h-4 fill-current" />
+                    <span>{language === 'en' ? 'Order Cart on WhatsApp' : 'হোয়াটসঅ্যাপে অর্ডার পাঠান'} — ৳{(cartTotal + shippingCost).toLocaleString()}</span>
+                  </a>
+
+                  {!siteSettings.companyInfo?.whatsappOrderingOnly && (
+                    <button 
+                      onClick={handleCheckout}
+                      className="w-full py-3 bg-slate-900 text-white text-xs font-bold rounded-xl hover:bg-amber-600 transition-all active:scale-[0.98] flex items-center justify-center gap-2 cursor-pointer"
+                    >
+                      {t.placeOrder} — ৳{(cartTotal + shippingCost).toLocaleString()}
+                      <ArrowRight className="w-4 h-4" />
+                    </button>
+                  )}
                 </div>
               )}
             </motion.div>
@@ -3104,88 +3177,127 @@ interface ProductCardProps {
   key?: React.Key;
   isFavorited?: boolean;
   onToggleFavorite?: (e: React.MouseEvent) => void;
+  whatsappNumber?: string;
+  whatsappOrderEnabled?: boolean;
+  whatsappOrderingOnly?: boolean;
 }
 
-function ProductCard({ product, onClick, priority = false, language, isFavorited = false, onToggleFavorite }: ProductCardProps) {
+function ProductCard({ 
+  product, 
+  onClick, 
+  priority = false, 
+  language, 
+  isFavorited = false, 
+  onToggleFavorite,
+  whatsappNumber = "01410161323",
+  whatsappOrderEnabled = true,
+  whatsappOrderingOnly = false
+}: ProductCardProps) {
+  const waMessage = language === 'en'
+    ? `Hello Yummy Express! I want to order:\n🍔 Product: ${product.name}\n💰 Price: ৳${product.price}${product.weight ? `\n⚖️ Weight: ${product.weight}` : ''}\nPlease confirm my order. Thank you!`
+    : `হ্যালো Yummy Express! আমি এই খাবারটি অর্ডার করতে চাই:\n🍔 খাবার: ${product.nameBn || product.name}\n💰 মূল্য: ৳${product.price}${product.weight ? `\n⚖️ পরিমাপ: ${product.weightBn || product.weight}` : ''}\nআমার অর্ডারটি কনফার্ম করুন। ধন্যবাদ!`;
+  
+  const waLink = getWhatsAppLink(whatsappNumber, waMessage);
+
   return (
     <motion.div 
       initial={{ opacity: 0, y: 16 }}
       whileInView={{ opacity: 1, y: 0 }}
       viewport={{ once: true }}
       transition={{ duration: 0.4, ease: "easeOut" }}
-      className="card-sleek group cursor-pointer h-full"
+      className="card-sleek group cursor-pointer h-full flex flex-col justify-between"
       onClick={onClick}
     >
-      <div className="aspect-square bg-slate-100 rounded-lg mb-4 flex items-center justify-center relative overflow-hidden">
-        {product.isNew && (
-          <span className="absolute top-2 left-2 bg-white px-2 py-1 text-[10px] font-bold rounded shadow-sm z-10">{language === 'en' ? 'NEW' : 'নতুন'}</span>
-        )}
-        {product.discount && (
-          <span className="absolute top-2 right-2 bg-red-600 text-white px-2 py-1 text-[10px] font-bold rounded shadow-sm z-10">
-            -{product.discount}%
-          </span>
-        )}
-        {onToggleFavorite && (
-          <button
-            type="button"
-            onClick={onToggleFavorite}
-            className="absolute bottom-2 right-2 w-8 h-8 bg-white/90 hover:bg-white text-slate-700 hover:text-rose-500 rounded-full flex items-center justify-center shadow-md transition-all duration-300 z-10 active:scale-95 cursor-pointer hover:scale-110"
-            title={language === 'en' ? 'Add to Wishlist' : 'প্রিয় তালিকায় যোগ করুন'}
-          >
-            <Heart className={`w-4 h-4 transition-colors ${isFavorited ? 'fill-rose-500 text-rose-500' : 'text-slate-500'}`} />
-          </button>
-        )}
-        <motion.img 
-          src={product.image || undefined} 
-          loading={priority ? "eager" : "lazy"}
-          alt={language === 'en' ? product.name : product.nameBn}
-          className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
-        />
-      </div>
-      <div className="flex flex-col flex-1">
-        <h3 className="font-bold text-sm text-slate-800 line-clamp-1">
-          {language === 'en' ? product.name : product.nameBn}
-        </h3>
-        {product.weight && (
-          <span className="text-xs font-semibold text-slate-500 mt-1">
-            {language === 'en' ? `Weight: ${product.weight}` : `পরিমাপ: ${product.weightBn || product.weight}`}
-          </span>
-        )}
-        <div className="flex items-center justify-between gap-2 mt-0.5 mb-2">
-          <p className="text-xs text-slate-400">{language === 'en' ? product.category : product.categoryBn}</p>
-          {product.deliveryCharge !== undefined && product.deliveryCharge !== null && (
-            <span className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full flex items-center gap-0.5 border ${
-              product.deliveryCharge === 0 
-                ? 'bg-emerald-50 text-emerald-600 border-emerald-100/50' 
-                : 'bg-slate-50 text-slate-500 border-slate-100/50'
-            }`}>
-              <Truck className={`w-2.5 h-2.5 ${product.deliveryCharge === 0 ? 'text-emerald-500' : 'text-slate-400'}`} />
-              {product.deliveryCharge === 0 
-                ? (language === 'en' ? 'Free' : 'ফ্রি') 
-                : `৳${product.deliveryCharge}`}
+      <div>
+        <div className="aspect-square bg-slate-100 rounded-lg mb-4 flex items-center justify-center relative overflow-hidden">
+          {product.isNew && (
+            <span className="absolute top-2 left-2 bg-white px-2 py-1 text-[10px] font-bold rounded shadow-sm z-10">{language === 'en' ? 'NEW' : 'নতুন'}</span>
+          )}
+          {product.discount && (
+            <span className="absolute top-2 right-2 bg-red-600 text-white px-2 py-1 text-[10px] font-bold rounded shadow-sm z-10">
+              -{product.discount}%
             </span>
           )}
+          {onToggleFavorite && (
+            <button
+              type="button"
+              onClick={onToggleFavorite}
+              className="absolute bottom-2 right-2 w-8 h-8 bg-white/90 hover:bg-white text-slate-700 hover:text-rose-500 rounded-full flex items-center justify-center shadow-md transition-all duration-300 z-10 active:scale-95 cursor-pointer hover:scale-110"
+              title={language === 'en' ? 'Add to Wishlist' : 'প্রিয় তালিকায় যোগ করুন'}
+            >
+              <Heart className={`w-4 h-4 transition-colors ${isFavorited ? 'fill-rose-500 text-rose-500' : 'text-slate-500'}`} />
+            </button>
+          )}
+          <motion.img 
+            src={product.image || undefined} 
+            loading={priority ? "eager" : "lazy"}
+            alt={language === 'en' ? product.name : product.nameBn}
+            className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
+          />
         </div>
-        <div className="flex items-center justify-between mt-auto pt-3 border-t border-slate-100">
-          <div className="flex items-baseline gap-1.5 flex-wrap">
-            <PriceDisplay product={product} />
-            {product.weight && (
-              <span className="text-[10px] text-slate-400 font-medium whitespace-nowrap">
-                / {language === 'en' ? product.weight : (product.weightBn || product.weight)}
+        <div className="flex flex-col flex-1">
+          <h3 className="font-bold text-sm text-slate-800 line-clamp-1">
+            {language === 'en' ? product.name : product.nameBn}
+          </h3>
+          {product.weight && (
+            <span className="text-xs font-semibold text-slate-500 mt-1">
+              {language === 'en' ? `Weight: ${product.weight}` : `পরিমাপ: ${product.weightBn || product.weight}`}
+            </span>
+          )}
+          <div className="flex items-center justify-between gap-2 mt-0.5 mb-2">
+            <p className="text-xs text-slate-400">{language === 'en' ? product.category : product.categoryBn}</p>
+            {product.deliveryCharge !== undefined && product.deliveryCharge !== null && (
+              <span className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full flex items-center gap-0.5 border ${
+                product.deliveryCharge === 0 
+                  ? 'bg-emerald-50 text-emerald-600 border-emerald-100/50' 
+                  : 'bg-slate-50 text-slate-500 border-slate-100/50'
+              }`}>
+                <Truck className={`w-2.5 h-2.5 ${product.deliveryCharge === 0 ? 'text-emerald-500' : 'text-slate-400'}`} />
+                {product.deliveryCharge === 0 
+                  ? (language === 'en' ? 'Free' : 'ফ্রি') 
+                  : `৳${product.deliveryCharge}`}
               </span>
             )}
           </div>
-          <button 
-            onClick={(e) => {
-              e.stopPropagation();
-              onClick();
-            }}
-            className="p-1.5 bg-slate-900 text-white rounded-md hover:bg-amber-600 transition-colors"
-          >
-            <Plus className="w-4 h-4" />
-          </button>
+          <div className="flex items-center justify-between mt-auto pt-3 border-t border-slate-100">
+            <div className="flex items-baseline gap-1.5 flex-wrap">
+              <PriceDisplay product={product} />
+              {product.weight && (
+                <span className="text-[10px] text-slate-400 font-medium whitespace-nowrap">
+                  / {language === 'en' ? product.weight : (product.weightBn || product.weight)}
+                </span>
+              )}
+            </div>
+            {!whatsappOrderingOnly && (
+              <button 
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onClick();
+                }}
+                className="p-1.5 bg-slate-900 text-white rounded-md hover:bg-amber-600 transition-colors"
+                title={language === 'en' ? 'Add to Cart' : 'কার্টে যোগ করুন'}
+              >
+                <Plus className="w-4 h-4" />
+              </button>
+            )}
+          </div>
         </div>
       </div>
+
+      {whatsappOrderEnabled && (
+        <div className="mt-3 pt-2 border-t border-slate-100">
+          <a
+            href={waLink}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="w-full py-2 px-3 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-extrabold text-xs rounded-xl flex items-center justify-center gap-2 shadow-md shadow-emerald-600/20 transition-all hover:shadow-lg"
+          >
+            <MessageSquare className="w-3.5 h-3.5 fill-current shrink-0" />
+            <span>{language === 'en' ? 'WhatsApp Order' : 'হোয়াটসঅ্যাপে অর্ডার'}</span>
+          </a>
+        </div>
+      )}
     </motion.div>
   );
 }

@@ -37,6 +37,7 @@ import {
   Truck,
   Calendar,
   Clock,
+  MessageSquare,
 } from "lucide-react";
 import {
   BarChart,
@@ -249,6 +250,9 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
       deliveryChargeOutside: 120,
       deliveryFreeThreshold: 1000,
       deliveryChargeEnabled: false,
+      whatsappNumber: "01410161323",
+      whatsappOrderingOnly: false,
+      whatsappOrderEnabled: true,
     },
   });
 
@@ -937,8 +941,36 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
     }
   };
 
+  const persistSiteSettings = async (updatedSettings: typeof siteSettings) => {
+    setSiteSettings(updatedSettings);
+
+    try {
+      localStorage.setItem("yummydash_custom_settings", JSON.stringify(updatedSettings));
+      localStorage.setItem("yummy_site_settings", JSON.stringify(updatedSettings));
+    } catch (e) {
+      console.error("Error writing settings to localStorage:", e);
+    }
+
+    window.dispatchEvent(new Event("yummydash_settings_change"));
+
+    if (supabase) {
+      try {
+        const { error } = await supabase.from("settings").upsert({
+          id: "global",
+          ...updatedSettings,
+          updated_at: new Date().toISOString(),
+        });
+        if (error) {
+          console.warn("Supabase settings upsert error (saved locally):", error);
+        }
+      } catch (err) {
+        console.warn("Supabase settings save exception:", err);
+      }
+    }
+  };
+
   const fetchSettings = async () => {
-    const localSettingsStr = localStorage.getItem("yummydash_custom_settings");
+    const localSettingsStr = localStorage.getItem("yummydash_custom_settings") || localStorage.getItem("yummy_site_settings");
     if (localSettingsStr) {
       try {
         const localSettings = JSON.parse(localSettingsStr);
@@ -966,6 +998,9 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
               deliveryChargeOutside: localSettings.companyInfo?.deliveryChargeOutside !== undefined ? localSettings.companyInfo.deliveryChargeOutside : 120,
               deliveryFreeThreshold: localSettings.companyInfo?.deliveryFreeThreshold !== undefined ? localSettings.companyInfo.deliveryFreeThreshold : 1000,
               deliveryChargeEnabled: !!localSettings.companyInfo?.deliveryChargeEnabled,
+              whatsappNumber: localSettings.companyInfo?.whatsappNumber || "01410161323",
+              whatsappOrderingOnly: !!localSettings.companyInfo?.whatsappOrderingOnly,
+              whatsappOrderEnabled: localSettings.companyInfo?.whatsappOrderEnabled !== undefined ? !!localSettings.companyInfo.whatsappOrderEnabled : true,
             },
           });
         }
@@ -988,29 +1023,34 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
         return;
       }
       if (data) {
-        setSiteSettings({
-          heroTitle: data.heroTitle || "",
-          heroDesc: data.heroDesc || "",
-          heroTitleBn: data.heroTitleBn || "",
-          heroDescBn: data.heroDescBn || "",
-          logoUrl: data.logoUrl || "",
-          companyInfo: {
-            description: data.companyInfo?.description || "",
-            descriptionBn: data.companyInfo?.descriptionBn || "",
-            mission: data.companyInfo?.mission || "",
-            missionBn: data.companyInfo?.missionBn || "",
-            team: data.companyInfo?.team || [],
-            googleSheetsWebhook: data.companyInfo?.googleSheetsWebhook || "",
-            googleSheetsWebhookEnabled:
-              !!data.companyInfo?.googleSheetsWebhookEnabled,
-            googleSheetsLink: data.companyInfo?.googleSheetsLink || "",
-            categories: data.companyInfo?.categories || [],
-            sliders: data.companyInfo?.sliders || [],
-            deliveryChargeInside: data.companyInfo?.deliveryChargeInside !== undefined ? data.companyInfo.deliveryChargeInside : 60,
-            deliveryChargeOutside: data.companyInfo?.deliveryChargeOutside !== undefined ? data.companyInfo.deliveryChargeOutside : 120,
-            deliveryFreeThreshold: data.companyInfo?.deliveryFreeThreshold !== undefined ? data.companyInfo.deliveryFreeThreshold : 1000,
-            deliveryChargeEnabled: !!data.companyInfo?.deliveryChargeEnabled,
-          },
+        setSiteSettings(prev => {
+          const dbCompany = data.companyInfo || {};
+          const dbCategories = dbCompany.categories && Array.isArray(dbCompany.categories) && dbCompany.categories.length > 0
+            ? dbCompany.categories
+            : prev.companyInfo?.categories || [];
+          const dbSliders = dbCompany.sliders && Array.isArray(dbCompany.sliders) && dbCompany.sliders.length > 0
+            ? dbCompany.sliders
+            : prev.companyInfo?.sliders || [];
+          return {
+            heroTitle: data.heroTitle || prev.heroTitle || "",
+            heroDesc: data.heroDesc || prev.heroDesc || "",
+            heroTitleBn: data.heroTitleBn || prev.heroTitleBn || "",
+            heroDescBn: data.heroDescBn || prev.heroDescBn || "",
+            logoUrl: data.logoUrl || prev.logoUrl || "",
+            companyInfo: {
+              ...prev.companyInfo,
+              ...dbCompany,
+              categories: dbCategories,
+              sliders: dbSliders,
+              whatsappNumber: dbCompany.whatsappNumber || prev.companyInfo?.whatsappNumber || "01410161323",
+              deliveryChargeInside: dbCompany.deliveryChargeInside !== undefined ? dbCompany.deliveryChargeInside : (prev.companyInfo?.deliveryChargeInside ?? 60),
+              deliveryChargeOutside: dbCompany.deliveryChargeOutside !== undefined ? dbCompany.deliveryChargeOutside : (prev.companyInfo?.deliveryChargeOutside ?? 120),
+              deliveryFreeThreshold: dbCompany.deliveryFreeThreshold !== undefined ? dbCompany.deliveryFreeThreshold : (prev.companyInfo?.deliveryFreeThreshold ?? 1000),
+              deliveryChargeEnabled: dbCompany.deliveryChargeEnabled !== undefined ? !!dbCompany.deliveryChargeEnabled : !!prev.companyInfo?.deliveryChargeEnabled,
+              whatsappOrderingOnly: dbCompany.whatsappOrderingOnly !== undefined ? !!dbCompany.whatsappOrderingOnly : !!prev.companyInfo?.whatsappOrderingOnly,
+              whatsappOrderEnabled: dbCompany.whatsappOrderEnabled !== undefined ? !!dbCompany.whatsappOrderEnabled : (prev.companyInfo?.whatsappOrderEnabled ?? true),
+            },
+          };
         });
       }
     } catch (error: any) {
@@ -1373,21 +1413,7 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
         },
       };
 
-      setSiteSettings(updatedSettings);
-
-      if (supabase) {
-        const { error } = await supabase.from("settings").upsert({
-          id: "global",
-          ...updatedSettings,
-          updated_at: new Date().toISOString(),
-        });
-        if (error) throw error;
-      }
-      localStorage.setItem(
-        "yummydash_custom_settings",
-        JSON.stringify(updatedSettings),
-      );
-      window.dispatchEvent(new Event("yummydash_settings_change"));
+      await persistSiteSettings(updatedSettings);
 
       setStatusMessage({
         text:
@@ -2309,7 +2335,7 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
     }
   };
 
-  const handleAddSlider = () => {
+  const handleAddSlider = async () => {
     if (!newSlider.image) {
       alert(
         language === "en"
@@ -2339,13 +2365,15 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
       price: linkedPrice || undefined,
     };
 
-    setSiteSettings((prev) => ({
-      ...prev,
+    const updatedSettings = {
+      ...siteSettings,
       companyInfo: {
-        ...prev.companyInfo,
-        sliders: [...(prev.companyInfo.sliders || []), sliderToAdd],
+        ...siteSettings.companyInfo,
+        sliders: [...(siteSettings.companyInfo.sliders || []), sliderToAdd],
       },
-    }));
+    };
+
+    await persistSiteSettings(updatedSettings);
 
     setNewSlider({
       image: "",
@@ -2360,28 +2388,30 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
     setStatusMessage({
       text:
         language === "en"
-          ? 'New slide added! Click "Save Configuration" at the bottom to save permanently.'
-          : 'নতুন স্লাইড যোগ হয়েছে! স্থায়ীভাবে সংরক্ষণ করতে নিচের "Save Configuration" বাটনে ক্লিক করুন।',
+          ? 'New slide added and saved permanently!'
+          : 'নতুন স্লাইড স্থায়ীভাবে যুক্ত ও সংরক্ষিত হয়েছে!',
       type: "success",
     });
   };
 
-  const handleRemoveSlider = (sliderId: string) => {
-    setSiteSettings((prev) => ({
-      ...prev,
+  const handleRemoveSlider = async (sliderId: string) => {
+    const updatedSettings = {
+      ...siteSettings,
       companyInfo: {
-        ...prev.companyInfo,
-        sliders: (prev.companyInfo.sliders || []).filter(
+        ...siteSettings.companyInfo,
+        sliders: (siteSettings.companyInfo.sliders || []).filter(
           (item) => item.id !== sliderId,
         ),
       },
-    }));
+    };
+
+    await persistSiteSettings(updatedSettings);
 
     setStatusMessage({
       text:
         language === "en"
-          ? 'Slide removed! Click "Save Configuration" at the bottom to save permanently.'
-          : 'স্লাইডটি সরানো হয়েছে! স্থায়ীভাবে সংরক্ষণ করতে নিচের "Save Configuration" বাটনে ক্লিক করুন।',
+          ? 'Slide removed and settings updated permanently!'
+          : 'স্লাইডটি রিমুভ করে স্থায়ীভাবে সংরক্ষণ করা হয়েছে!',
       type: "success",
     });
   };
@@ -2441,7 +2471,7 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
           },
         };
 
-        setSiteSettings(updatedSettings);
+        await persistSiteSettings(updatedSettings);
 
         // Update product categories to stay synced
         if (editingCategoryName !== enFormatted) {
@@ -2484,22 +2514,8 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
         setNewCategory({ en: "", bn: "", image: "" });
         setEditingCategoryName(null);
 
-        if (supabase) {
-          const { error } = await supabase.from("settings").upsert({
-            id: "global",
-            ...updatedSettings,
-            updated_at: new Date().toISOString(),
-          });
-          if (error) throw error;
-        } else {
-          localStorage.setItem(
-            "yummy_site_settings",
-            JSON.stringify(updatedSettings),
-          );
-        }
-
         setStatusMessage({
-          text: "Category updated successfully!",
+          text: "Category updated and saved permanently!",
           type: "success",
         });
       } else {
@@ -2529,25 +2545,11 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
           },
         };
 
-        setSiteSettings(updatedSettings);
+        await persistSiteSettings(updatedSettings);
         setNewCategory({ en: "", bn: "", image: "" });
 
-        if (supabase) {
-          const { error } = await supabase.from("settings").upsert({
-            id: "global",
-            ...updatedSettings,
-            updated_at: new Date().toISOString(),
-          });
-          if (error) throw error;
-        } else {
-          localStorage.setItem(
-            "yummy_site_settings",
-            JSON.stringify(updatedSettings),
-          );
-        }
-
         setStatusMessage({
-          text: "Category added successfully!",
+          text: "Category added and saved permanently!",
           type: "success",
         });
       }
@@ -2576,24 +2578,10 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
         },
       };
 
-      setSiteSettings(updatedSettings);
-
-      if (supabase) {
-        const { error } = await supabase.from("settings").upsert({
-          id: "global",
-          ...updatedSettings,
-          updated_at: new Date().toISOString(),
-        });
-        if (error) throw error;
-      } else {
-        localStorage.setItem(
-          "yummy_site_settings",
-          JSON.stringify(updatedSettings),
-        );
-      }
+      await persistSiteSettings(updatedSettings);
 
       setStatusMessage({
-        text: "Category deleted successfully!",
+        text: "Category deleted and saved permanently!",
         type: "success",
       });
     } catch (error) {
@@ -2848,30 +2836,9 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
     e.preventDefault();
     setStatusMessage(null);
     try {
-      if (!supabase) {
-        localStorage.setItem(
-          "yummydash_custom_settings",
-          JSON.stringify(siteSettings),
-        );
-        window.dispatchEvent(new Event("yummydash_settings_change"));
-        setStatusMessage({
-          text: "Settings saved successfully (locally)!",
-          type: "success",
-        });
-        return;
-      }
-      const { error } = await supabase.from("settings").upsert({
-        id: "global",
-        ...siteSettings,
-        updated_at: new Date().toISOString(),
-      });
-      if (error) throw error;
-      localStorage.setItem(
-        "yummydash_custom_settings",
-        JSON.stringify(siteSettings),
-      );
+      await persistSiteSettings(siteSettings);
       setStatusMessage({
-        text: "Settings saved successfully!",
+        text: language === "en" ? "Settings saved successfully!" : "সেটিংস সফলভাবে স্থায়ীভাবে সংরক্ষণ করা হয়েছে!",
         type: "success",
       });
     } catch (error) {
@@ -5458,6 +5425,109 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
                           </div>
                         </div>
                       )}
+                    </div>
+                  </div>
+
+                  {/* WhatsApp Direct Ordering Settings Section */}
+                  <div className="space-y-6 pt-8 border-t border-slate-100 animate-in fade-in duration-300">
+                    <div className="space-y-2">
+                      <h4 className="text-xl font-bold flex items-center gap-2 font-black uppercase tracking-tight text-emerald-800">
+                        <MessageSquare className="w-5 h-5 text-emerald-600" />
+                        {language === "en" ? "WhatsApp Direct Ordering Settings" : "হোয়াটসঅ্যাপ মেসেজ ও অর্ডার কনফিগারেশন"}
+                      </h4>
+                      <p className="text-xs text-slate-400 uppercase tracking-widest font-bold">
+                        {language === "en" 
+                          ? "Configure WhatsApp phone number and direct order options for customers." 
+                          : "কাস্টমারদের সরাসরি হোয়াটসঅ্যাপে অর্ডারের সুবিধা ও হোয়াটসঅ্যাপ নম্বর সেট করুন।"}
+                      </p>
+                    </div>
+
+                    <div className="bg-emerald-50/40 rounded-[2rem] p-8 border border-emerald-100/80 space-y-6">
+                      {/* WhatsApp Phone Number Input */}
+                      <div className="space-y-2 font-sans">
+                        <label className="text-[10px] font-black uppercase tracking-widest text-emerald-800 block font-bold">
+                          {language === "en" ? "WhatsApp Phone Number (e.g., 01410161323)" : "হোয়াটসঅ্যাপ নম্বর (যেমন, 01410161323)"}
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="01410161323"
+                          value={siteSettings.companyInfo?.whatsappNumber || "01410161323"}
+                          onChange={(e) => setSiteSettings({
+                            ...siteSettings,
+                            companyInfo: {
+                              ...siteSettings.companyInfo,
+                              whatsappNumber: e.target.value
+                            }
+                          })}
+                          className="w-full bg-white border border-emerald-200 rounded-2xl px-6 py-4 outline-none text-sm font-bold text-slate-800 focus:ring-2 focus:ring-emerald-500"
+                        />
+                      </div>
+
+                      {/* Toggle 1: Show WhatsApp Button on Product Cards */}
+                      <div className="flex items-center justify-between p-4 bg-white rounded-2xl border border-emerald-100 shadow-sm">
+                        <div className="space-y-1 font-sans">
+                          <label className="text-sm font-bold text-slate-800 block">
+                            {language === "en" ? "Show WhatsApp Order Button on Products" : "প্রোডাক্টের নিচে হোয়াটসঅ্যাপে অর্ডার বাটন দেখান"}
+                          </label>
+                          <span className="text-xs text-slate-500 block">
+                            {language === "en" 
+                              ? "Displays 'Order on WhatsApp' on product cards and detail modal." 
+                              : "প্রতিটি প্রোডাক্টের নিচে 'হোয়াটসঅ্যাপে অর্ডার করুন' বাটন সক্রিয় রাখবে।"}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setSiteSettings({
+                            ...siteSettings,
+                            companyInfo: {
+                              ...siteSettings.companyInfo,
+                              whatsappOrderEnabled: siteSettings.companyInfo?.whatsappOrderEnabled !== undefined ? !siteSettings.companyInfo.whatsappOrderEnabled : false
+                            }
+                          })}
+                          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                            (siteSettings.companyInfo?.whatsappOrderEnabled ?? true) ? "bg-emerald-600" : "bg-slate-300"
+                          }`}
+                        >
+                          <span
+                            className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                              (siteSettings.companyInfo?.whatsappOrderEnabled ?? true) ? "translate-x-6" : "translate-x-1"
+                            }`}
+                          />
+                        </button>
+                      </div>
+
+                      {/* Toggle 2: Remove Website Checkout (WhatsApp Only Mode) */}
+                      <div className="flex items-center justify-between p-4 bg-white rounded-2xl border border-emerald-100 shadow-sm">
+                        <div className="space-y-1 font-sans">
+                          <label className="text-sm font-bold text-slate-800 block">
+                            {language === "en" ? "WhatsApp Only Mode (Remove Website Checkout)" : "শুধুমাত্র হোয়াটসঅ্যাপে অর্ডার মোড (ওয়েবসাইট চেকআউট বন্ধ রাখুন)"}
+                          </label>
+                          <span className="text-xs text-slate-500 block">
+                            {language === "en" 
+                              ? "When enabled, website standard checkout is disabled and customers order via WhatsApp." 
+                              : "চালু করলে ওয়েবসাইটের সরাসরি চেকআউট বন্ধ থাকবে এবং সকল অর্ডারের সিদ্ধান্ত হোয়াটসঅ্যাপ মেসেজের মাধ্যমে নেওয়া হবে।"}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setSiteSettings({
+                            ...siteSettings,
+                            companyInfo: {
+                              ...siteSettings.companyInfo,
+                              whatsappOrderingOnly: !siteSettings.companyInfo?.whatsappOrderingOnly
+                            }
+                          })}
+                          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                            siteSettings.companyInfo?.whatsappOrderingOnly ? "bg-emerald-600" : "bg-slate-300"
+                          }`}
+                        >
+                          <span
+                            className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                              siteSettings.companyInfo?.whatsappOrderingOnly ? "translate-x-6" : "translate-x-1"
+                            }`}
+                          />
+                        </button>
+                      </div>
                     </div>
                   </div>
 
