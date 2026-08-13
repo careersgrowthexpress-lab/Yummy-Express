@@ -57,6 +57,59 @@ import { Product, Order } from "../types";
 import { PRODUCTS, CATEGORIES, PRICING_CONFIG } from "../constants";
 import AdminLogin from "./AdminLogin";
 
+const compressImage = (
+  fileOrBase64: File | string,
+  maxWidth = 800,
+  maxHeight = 800,
+  quality = 0.75
+): Promise<string> => {
+  return new Promise((resolve) => {
+    if (!fileOrBase64) {
+      resolve("");
+      return;
+    }
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      let width = img.width;
+      let height = img.height;
+      if (width > maxWidth || height > maxHeight) {
+        if (width / height > maxWidth / maxHeight) {
+          height = Math.round((height * maxWidth) / width);
+          width = maxWidth;
+        } else {
+          width = Math.round((width * maxHeight) / height);
+          height = maxHeight;
+        }
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      } else {
+        resolve(typeof fileOrBase64 === "string" ? fileOrBase64 : "");
+      }
+    };
+    img.onerror = () => {
+      resolve(typeof fileOrBase64 === "string" ? fileOrBase64 : "");
+    };
+
+    if (typeof fileOrBase64 === "string") {
+      img.src = fileOrBase64;
+    } else {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        img.src = (e.target?.result as string) || "";
+      };
+      reader.onerror = () => resolve("");
+      reader.readAsDataURL(fileOrBase64);
+    }
+  });
+};
+
 interface AdminPanelProps {
   onClose: () => void;
   language: "en" | "bn";
@@ -1864,26 +1917,33 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
     if (!file) return;
 
     if (!supabase) {
-      // Fallback directly to base64 if Supabase is not configured
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setFormData((prev) => ({ ...prev, image: reader.result as string }));
+      // Fallback directly to compressed base64 if Supabase is not configured
+      try {
+        const compressedBase64 = await compressImage(file, 800, 800, 0.75);
+        setFormData((prev) => ({ ...prev, image: compressedBase64 }));
         setStatusMessage({
-          text: "ইমেজটি সফলভাবে লোকাল মেমোরি (Base64) আকারে যুক্ত করা হয়েছে!",
+          text: language === "en" ? "Image attached successfully!" : "ছবিটি সফলভাবে যুক্ত করা হয়েছে!",
           type: "success",
         });
-      };
-      reader.readAsDataURL(file);
+      } catch (err) {
+        console.error("Image compression error:", err);
+      }
       return;
     }
 
-    if (file.size > 5 * 1024 * 1024) {
-      setStatusMessage({ text: "File too large (max 5MB)", type: "error" });
+    if (file.size > 10 * 1024 * 1024) {
+      setStatusMessage({ 
+        text: language === "en" ? "File too large (max 10MB)" : "ফাইলের আকার অনেক বড় (সর্বোচ্চ ১০ এমবি)", 
+        type: "error" 
+      });
       return;
     }
 
     setUploading(true);
-    setStatusMessage({ text: "Uploading image...", type: "success" });
+    setStatusMessage({ 
+      text: language === "en" ? "Uploading image..." : "ছবি আপলোড হচ্ছে...", 
+      type: "success" 
+    });
     try {
       const fileExt = file.name.split(".").pop();
       const fileName = `${Math.random()}.${fileExt}`;
@@ -1911,21 +1971,24 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
 
       setFormData((prev) => ({ ...prev, image: publicUrl }));
       setStatusMessage({
-        text: "Image uploaded successfully!",
+        text: language === "en" ? "Image uploaded successfully!" : "ছবি সফলভাবে আপলোড হয়েছে!",
         type: "success",
       });
     } catch (error: any) {
       console.error("Upload error:", error);
-      // Fall back to reading as base64 so the user can still save the product!
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setFormData((prev) => ({ ...prev, image: reader.result as string }));
+      // Fall back to reading as compressed base64 so the user can still save the product!
+      try {
+        const compressedBase64 = await compressImage(file, 800, 800, 0.75);
+        setFormData((prev) => ({ ...prev, image: compressedBase64 }));
         setStatusMessage({
-          text: "আপলোড সফল হয়েছে! (Supabase বাকেট তৈরি না থাকায় ইমেজটি লোকাল মেমোরি Base64 আকারে সফলভাবে যুক্ত করা হয়েছে)",
+          text: language === "en" 
+            ? "Image saved locally!" 
+            : "ছবিটি সফলভাবে যুক্ত করা হয়েছে!",
           type: "success",
         });
-      };
-      reader.readAsDataURL(file);
+      } catch (cErr) {
+        console.error("Fallback image compression failed:", cErr);
+      }
     } finally {
       setUploading(false);
       e.target.value = "";
@@ -2471,7 +2534,23 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
         }
       });
 
-      // Exclude deliveryCharge and id from the DB data since deliveryCharge is NOT a db column
+      // Default string fallbacks so database constraints pass
+      cleanData.name = cleanData.name?.trim() || cleanData.nameBn?.trim() || "New Item";
+      cleanData.nameBn = cleanData.nameBn?.trim() || cleanData.name?.trim() || "নতুন খাবার";
+      cleanData.category = cleanData.category?.trim() || "Healthy";
+      cleanData.categoryBn = cleanData.categoryBn?.trim() || "স্বাস্থ্যকর";
+      cleanData.image = cleanData.image || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?q=80&w=400&auto=format&fit=crop";
+
+      // If image is a large base64 string (>200KB), compress it before saving
+      if (cleanData.image && cleanData.image.startsWith("data:image") && cleanData.image.length > 200000) {
+        try {
+          cleanData.image = await compressImage(cleanData.image, 800, 800, 0.7);
+        } catch (cErr) {
+          console.warn("Image compression warning during product save:", cErr);
+        }
+      }
+
+      // Exclude deliveryCharge and id from DB payload
       const { id, deliveryCharge, ...dbData } = cleanData;
       const dataToSave = {
         ...dbData,
@@ -2493,22 +2572,31 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
         }
       };
 
-      // Always save locally FIRST so product is never lost or blocked
-      const localProductsStr = localStorage.getItem("yummydash_custom_products");
-      let localProducts = [...PRODUCTS];
-      if (localProductsStr) {
-        try {
-          localProducts = JSON.parse(localProductsStr);
-        } catch (err) {
-          console.error("Error parsing local products in save:", err);
-        }
-      }
-
       const activeProdId = editingId || ("prod_" + Math.random().toString(36).substring(2, 9));
       const fullProductToSave: Product = {
         ...cleanData,
         id: activeProdId,
       } as Product;
+
+      // 1. Instantly update React state so the product is visible in the list right away!
+      setProducts((prev) => {
+        if (editingId) {
+          return prev.map((p) => (p.id === editingId ? fullProductToSave : p));
+        } else {
+          return [fullProductToSave, ...prev.filter(p => p.id !== activeProdId)];
+        }
+      });
+
+      // 2. Always save locally FIRST so product is never lost
+      let localProducts = [...PRODUCTS];
+      try {
+        const localProductsStr = localStorage.getItem("yummydash_custom_products");
+        if (localProductsStr) {
+          localProducts = JSON.parse(localProductsStr);
+        }
+      } catch (err) {
+        console.error("Error parsing local products in save:", err);
+      }
 
       if (editingId) {
         localProducts = localProducts.map((p) =>
@@ -2522,7 +2610,7 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
 
       backupProductsLocally(localProducts);
 
-      // Save to localStorage with fallback for quota limits
+      // Save to localStorage with safe fallback for quota limits
       try {
         localStorage.setItem(
           "yummydash_custom_products",
@@ -2543,20 +2631,24 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
             JSON.stringify(prunedProducts)
           );
         } catch (storageErr2) {
-          const ultraPruned = localProducts.map((p) => {
-            if (p.image && p.image.startsWith("data:image")) {
-              return { ...p, image: "" };
-            }
-            return p;
-          });
-          localStorage.setItem(
-            "yummydash_custom_products",
-            JSON.stringify(ultraPruned)
-          );
+          try {
+            const ultraPruned = localProducts.map((p) => {
+              if (p.image && p.image.startsWith("data:image")) {
+                return { ...p, image: "" };
+              }
+              return p;
+            });
+            localStorage.setItem(
+              "yummydash_custom_products",
+              JSON.stringify(ultraPruned)
+            );
+          } catch (storageErr3) {
+            console.warn("LocalStorage space exhausted, product kept in active state:", storageErr3);
+          }
         }
       }
 
-      // Sync with Supabase if available
+      // 3. Sync with Supabase if available
       if (supabase) {
         try {
           if (editingId) {
@@ -2601,9 +2693,29 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
         type: "success",
       });
 
-      window.dispatchEvent(new Event("yummydash_products_change"));
+      // Clear form inputs and close edit/add drawer
       setEditingId(null);
       setIsAdding(false);
+      setFormData({
+        name: "",
+        nameBn: "",
+        price: 0,
+        discount: 0,
+        originalPrice: 0,
+        description: "",
+        descriptionBn: "",
+        image: "",
+        category: "Healthy",
+        categoryBn: "স্বাস্থ্যকর",
+        isNew: false,
+        isOffer: false,
+        stock: 100,
+        weight: "",
+        weightBn: "",
+        deliveryCharge: undefined,
+      });
+
+      window.dispatchEvent(new Event("yummydash_products_change"));
       await fetchProducts();
     } catch (error) {
       console.error("Save error:", error);
