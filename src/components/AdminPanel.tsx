@@ -455,10 +455,13 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
         .from("admins")
         .select("*")
         .order("created_at", { ascending: false });
-      if (error) throw error;
-      setAdmins(data || []);
-    } catch (error) {
-      console.error("Error fetching admins:", error);
+      if (error) {
+        console.warn("Supabase fetch admins notice:", error.message || error);
+      } else {
+        setAdmins(data || []);
+      }
+    } catch (error: any) {
+      console.warn("Supabase fetch admins notice:", error?.message || error);
     } finally {
       setAdminsLoading(false);
     }
@@ -980,7 +983,10 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
         .select("*")
         .eq("id", "global")
         .single();
-      if (error && error.code !== "PGRST116") throw error;
+      if (error && error.code !== "PGRST116") {
+        console.warn("Supabase fetch settings notice:", error.message || error);
+        return;
+      }
       if (data) {
         setSiteSettings({
           heroTitle: data.heroTitle || "",
@@ -1007,8 +1013,8 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
           },
         });
       }
-    } catch (error) {
-      console.error("Error fetching settings:", error);
+    } catch (error: any) {
+      console.warn("Supabase fetch settings notice:", error?.message || error);
     }
   };
 
@@ -1034,10 +1040,15 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
         .from("orders")
         .select("*")
         .order("created_at", { ascending: false });
-      if (error) throw error;
-      setOrders(data as Order[]);
-    } catch (error) {
-      console.error("Error fetching orders:", error);
+      if (error) {
+        console.warn("Supabase fetch orders notice (using local orders):", error.message || error);
+        setOrders(localOrders);
+      } else {
+        setOrders((data as Order[]) || localOrders);
+      }
+    } catch (error: any) {
+      console.warn("Supabase fetch orders notice (using local orders):", error?.message || error);
+      setOrders(localOrders);
     } finally {
       setOrdersLoading(false);
     }
@@ -1066,9 +1077,9 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
           .select("*")
           .order("updated_at", { ascending: false });
 
-        if (error) throw error;
-
-        if (data && data.length > 0) {
+        if (error) {
+          console.warn("Supabase fetch users notice (using local customers):", error.message || error);
+        } else if (data && data.length > 0) {
           const mappedList = data.map((u: any) => ({
             id: u.id,
             name: u.display_name || "No Name",
@@ -1086,8 +1097,8 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
           mappedList.forEach((u) => mergedMap.set(u.id, u));
           list = Array.from(mergedMap.values());
         }
-      } catch (err) {
-        console.error("Error fetching Supabase users in AdminPanel:", err);
+      } catch (err: any) {
+        console.warn("Supabase fetch users notice in AdminPanel:", err?.message || err);
       }
     }
 
@@ -2062,7 +2073,7 @@ export default function AdminPanel({ onClose, language }: AdminPanelProps) {
         type: "success",
       });
     } catch (error: any) {
-      console.error("Upload error:", error);
+      console.warn("Supabase upload notice (using compressed image fallback):", error?.message || error);
       // Fall back to reading as compressed base64 so the user can still save the product!
       try {
         const compressedBase64 = await compressImage(file, 800, 800, 0.75);
